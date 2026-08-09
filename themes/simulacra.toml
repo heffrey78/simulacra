@@ -1,0 +1,67 @@
+# A theme pack. The engine knows nothing about setting; everything genre-shaped
+# lives in files like this one. Swap with `SIMULACRA_THEME=<name>`.
+#
+# Two kinds of content here:
+#   * prompt fragments  -- injected into director/narrator/judge calls
+#   * name pools        -- used by procedural generation with zero LLM cost,
+#                          and as few-shot anchors so the model stays in voice
+#
+# Keep fragments SHORT. Every word here is prompt tokens on every call, and
+# prompt eval is not free on CPU.
+
+name = "Simulacra"
+tagline = "A dungeon that is a copy of somewhere that no longer exists."
+
+[voice]
+# The narrator's standing instruction. Two sentences maximum -- a 1.7b model
+# follows a tight brief far better than a long one.
+system = """You narrate a dungeon that is an imperfect copy of a place long gone. \
+Write in second person, present tense. Be concrete and sensory; never explain the \
+metaphor. Two sentences, maximum forty words."""
+
+# Words to lean on and words to ban. The ban list is doing real work: small
+# models reach for the same half-dozen adjectives constantly.
+motifs = ["repetition", "wear", "copies", "seams", "residue", "half-remembered", "wrongness"]
+banned = ["ancient", "eerie", "mysterious", "eldritch", "you feel a sense of", "little did you know"]
+
+[director]
+# Tier-3 call, once per floor. Asked for a concept, not a layout.
+system = """You design one floor of a dungeon that imperfectly copies a vanished place. \
+Give it a specific identity, not a generic one. Be terse."""
+
+[judge]
+# Tier-1 call. Rules on improvised actions.
+system = """You are a strict, fair referee. Decide if the action is physically \
+plausible given the room. Prefer allowing clever actions. Be terse."""
+
+# -- name pools ------------------------------------------------------------
+# Procedural generation draws from these. Structure (RoomKind) is code's job;
+# these decide what the structure is CALLED.
+
+[rooms]
+entrance = ["the Threshold", "the Reproduced Gate", "First Landing"]
+corridor = ["a seam", "a repeated hall", "a corridor that recurs", "the narrowing"]
+chamber  = ["a copied chamber", "the workroom", "a room of drafts", "the annex"]
+vault    = ["the Reliquary", "the Master Copy", "the Sealed Print"]
+lair     = ["the Nest", "the Spoiled Room", "where it settled"]
+shrine   = ["the Original", "the Reference Room", "the Unworn Place"]
+descent  = ["the stair down", "a shaft of repeated steps", "the next impression"]
+
+[monsters]
+# name, hp, attack, defense -- code balances, theme names.
+weak   = [["a smudged figure", 6, 2, 10], ["a partial", 5, 2, 9], ["an offcut", 7, 1, 10]]
+normal = [["a duplicate", 12, 3, 12], ["the worn attendant", 14, 3, 11]]
+strong = [["a compound thing", 22, 5, 14], ["the Overprint", 26, 6, 13]]
+
+[items]
+weapon  = [["a stuttering blade", 4], ["a copyist's knife", 3]]
+healing = [["a jar of clean water", 6], ["an unspoiled ration", 4]]
+key     = [["a key with no teeth"], ["a seal, half-pressed"]]
+
+[npcs]
+# NPCs persist across runs and accumulate memory. `anchor` is the graph node id.
+[[npcs.roster]]
+anchor = "npc:archivist"
+name = "the Archivist"
+role = "keeps count of everyone who has gone down"
+voice = "Terse and clerical, like reading from a ledger. Refers to delvers by number, never by name."

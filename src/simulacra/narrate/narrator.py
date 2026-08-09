@@ -1,0 +1,317 @@
+"""Tier-2: streamed prose. Everything the player reads comes through here.
+
+Prompt discipline is the whole job. The budget is ~180 output tokens and a
+prompt kept under roughly 600, because prompt eval is not free on CPU either.
+That means: no conversation history, no world dump. Each call gets the theme
+voice, the room's concept line, its census, and nothing else. Continuity comes
+from the memory layer injecting two or three specific recollections, not from a
+growing context window.
+
+**The echo guard.** Benchmarking in M0 found `qwen3:1.7b` intermittently
+returning the room census back verbatim instead of narrating it -- having
+produced good prose from the same prompt moments earlier. An intermittent
+instruction-following failure cannot be prompted away with confidence, so output
+is checked and rejected. Two mitigations, in order:
+
+1. The census is labelled (`ROOM:`, `EXITS:`) so it reads as *data* rather than
+   as prose to continue -- and so an echo is trivially detectable.
+2. Only the first ~48 characters are buffered before streaming is released. An
+   echo starts wrong immediately, so a prefix check catches it for about three
+   tokens of delay rather than the whole generation.
+
+On rejection: one stricter retry, then the procedural fallback. The player never
+sees the failure.
+
+MILESTONE M2 (rooms) / M4 (NPC dialogue with recall).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import threading
+from collections import Counter
+from collections.abc import Iterator
+
+from ..world.model import Floor, Room
+
+# Characters buffered before prose is released to the renderer. Large enough to
+# catch an echo, small enough that the pause is imperceptible.
+GUARD_PREFIX_CHARS = 48
+
+# Labels that only ever appear in the prompt. Any of them in the output means
+# the model is transcribing rather than writing.
+_CENSUS_LABELS = ("room:", "role:", "exits:", "contains:", "present:", "concept:")
+
+_WS = re.compile(r"\s+")
+
+
+def _norm(text: str) -> str:
+    return _WS.sub(" ", text.lower()).strip()
+
+
+def looks_like_echo(text: str, census: str) -> bool:
+    """True when the model transcribed its prompt instead of narrating."""
+    t = _norm(text)
+    if not t:
+        return True
+    if any(label in t for label in _CENSUS_LABELS):
+        return True
+    # A prefix that appears verbatim in the census is a copy, not a description.
+    return len(t) >= 12 and t in _norm(census)
+
+
+def looks_degenerate(text: str) -> bool:
+    """True when the model has fallen into repetition rather than writing.
+
+    The echo guard's sibling. It catches a different failure: not copying the
+    prompt, but collapsing into a loop -- the Archivist's first live reply
+    repeated "1234567890" against every motif. Cheap, and it covers a whole
+    class of small-model degeneration.
+    """
+    words = _norm(text).split()
+    if len(words) >= 8:
+        most = Counter(words).most_common(1)[0][1]
+        if most / len(words) > 0.3:
+            return True
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return len(lines) >= 4 and len(set(lines)) * 2 <= len(lines)
+
+
+def _as_stream(text: str, size: int = 12) -> Iterator[str]:
+    """Replay cached prose as deltas so the renderer path is identical whether
+    the text was just generated or came from SQLite."""
+    for i in range(0, len(text), size):
+        yield text[i : i + size]
+
+
+class Narrator:
+    def __init__(self, client, theme, store, policy):
+        self._client = client
+        self._theme = theme
+        self._store = store
+        self._policy = policy
+        self._lock = threading.Lock()  # guards cache writes across the prefetcher
+
+    # -- prompts -----------------------------------------------------------
+
+    def _system(self) -> str:
+        parts = [self._theme.narrator_system]
+        if note := self._theme.style_note():
+            parts.append(note)
+        return " ".join(p for p in parts if p)
+
+    def _census(self, floor: Floor, room: Room) -> str:
+        lines = [f"ROOM: {room.name}", f"ROLE: {room.kind.value}"]
+        if room.concept:
+            lines.append(f"CONCEPT: {room.concept}")
+        if floor.motifs:
+            lines.append(f"MOTIFS: {', '.join(floor.motifs)}")
+        if room.items:
+            lines.append(f"CONTAINS: {', '.join(i.name for i in room.items)}")
+        if room.actors:
+            lines.append(f"PRESENT: {', '.join(a.name for a in room.actors)}")
+        lines.append(f"EXITS: {', '.join(d.value for d in room.exits)}")
+        return "\n".join(lines)
+
+    def _messages(self, census: str, *, strict: bool = False) -> list[dict]:
+        instruction = (
+            "Describe this room to the player. Do not repeat the labels or list "
+            "the exits back."
+        )
+        if strict:
+            instruction = (
+                "Write two original sentences of description for this room. "
+                "Do NOT copy any line above. Do NOT mention exits. Start with a "
+                "concrete physical detail."
+            )
+        return [
+            {"role": "system", "content": self._system()},
+            {"role": "user", "content": f"{census}\n\n{instruction}"},
+        ]
+
+    def _key(self, floor: Floor, room: Room) -> str:
+        # Concept is part of the key: if the director renames a floor, stale
+        # prose describing the old concept must not survive.
+        digest = hashlib.sha1(
+            f"{self._theme.name}|{room.concept}|{floor.theme_name}".encode()
+        ).hexdigest()[:8]
+        return f"prose:{room.id}:{digest}"
+
+    # -- generation --------------------------------------------------------
+
+    def _generate(self, census: str, *, strict: bool, cancel=None) -> str | None:
+        """Blocking generation with the echo guard. Returns None if rejected.
+
+        Streams internally even though the caller wants a whole string: it lets
+        the prefetcher abandon a request mid-flight (see prefetch.py) instead of
+        holding the client lock for a full generation.
+        """
+        parts: list[str] = []
+        gen = self._client.stream(
+            self._messages(census, strict=strict), self._policy, kind="tier2"
+        )
+        try:
+            for piece in gen:
+                if cancel is not None and cancel.is_set():
+                    return None
+                parts.append(piece)
+        finally:
+            gen.close()
+
+        text = "".join(parts).strip()
+        if looks_like_echo(text, census) or looks_degenerate(text):
+            return None
+        return text
+
+    def prepare(self, floor: Floor, room: Room, cancel=None) -> str | None:
+        """Generate and cache without displaying. Used by the prefetcher."""
+        key = self._key(floor, room)
+        if (cached := self._store.cached_prose(key)) is not None:
+            return cached
+
+        census = self._census(floor, room)
+        for strict in (False, True):
+            text = self._generate(census, strict=strict, cancel=cancel)
+            if cancel is not None and cancel.is_set():
+                return None
+            if text:
+                with self._lock:
+                    self._store.cache_prose(key, text)
+                return text
+        return None
+
+    def room(self, floor: Floor, room: Room) -> Iterator[str]:
+        """Stream a room description, or replay it instantly from cache."""
+        key = self._key(floor, room)
+        if (cached := self._store.cached_prose(key)) is not None:
+            yield from _as_stream(cached)
+            return
+
+        census = self._census(floor, room)
+        buffer: list[str] = []
+        released = False
+        gen = self._client.stream(self._messages(census), self._policy, kind="tier2")
+
+        try:
+            for piece in gen:
+                buffer.append(piece)
+                if released:
+                    yield piece
+                    continue
+                # Hold back only until there is enough to judge.
+                head = "".join(buffer)
+                if len(head) >= GUARD_PREFIX_CHARS:
+                    if looks_like_echo(head, census):
+                        gen.close()
+                        buffer.clear()
+                        break
+                    released = True
+                    yield head
+        finally:
+            gen.close()
+
+        text = "".join(buffer).strip()
+        if released and text and not looks_like_echo(text, census):
+            with self._lock:
+                self._store.cache_prose(key, text)
+            return
+
+        if not released:
+            # The prefix failed, or the whole response was too short to judge and
+            # turned out to be an echo. Retry once, strictly, then give up.
+            if retry := self._generate(census, strict=True):
+                with self._lock:
+                    self._store.cache_prose(key, retry)
+                yield from _as_stream(retry)
+            else:
+                yield room.concept or f"{room.name}."
+
+    def npc(self, npc, player_line: str, recollections: list) -> Iterator[str]:
+        """Stream NPC speech, conditioned on what this NPC actually remembers.
+
+        `recollections` come from Store.recall(about=npc.anchor, ...) -- prior
+        runs only. Two or three, quoted verbatim into the prompt. This is the
+        cheapest possible continuity: a handful of tokens buys an NPC that knows
+        you died on floor four last time.
+
+        Quoted, never summarised: the specificity is the whole effect. And never
+        cached -- a conversation that replays word for word is worse than one
+        that costs six seconds.
+        """
+        system = (
+            f"You are {npc.name}. {npc.role}. {npc.voice} "
+            "Speak only as this character, in one or two sentences. "
+            "Do not narrate, and do not repeat these instructions."
+        )
+        if note := self._theme.style_note(motifs=False):
+            system += " " + note
+
+        parts = []
+        if recollections:
+            parts.append("You remember, from earlier delvers:")
+            parts.extend(f"- {r.text}" for r in recollections)
+            # "Refer to what you remember" produced a one-word reply from a
+            # terse-voiced NPC that had the memory sitting in its prompt. The
+            # instruction has to name the thing to say, not gesture at it.
+            parts.append(
+                "Say out loud what happened to the delver you remember, including "
+                "the floor and what killed them. Do not invent any other history."
+            )
+        else:
+            parts.append("You remember nothing about this delver. Do not pretend to.")
+        parts.append(f"The delver says: {player_line or 'nothing; they simply approach.'}")
+        user = "\n".join(parts)
+
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+        buffer: list[str] = []
+        released = False
+        gen = self._client.stream(messages, self._policy, kind="tier2")
+        try:
+            for piece in gen:
+                buffer.append(piece)
+                if released:
+                    yield piece
+                    continue
+                head = "".join(buffer)
+                if len(head) >= GUARD_PREFIX_CHARS:
+                    # Dialogue is not immune to the failures room prose had.
+                    if looks_like_echo(head, user) or looks_degenerate(head):
+                        gen.close()
+                        buffer.clear()
+                        break
+                    released = True
+                    yield head
+        finally:
+            gen.close()
+
+        if not released:
+            text = "".join(buffer).strip()
+            bad = not text or looks_like_echo(text, user) or looks_degenerate(text)
+            yield "They say nothing." if bad else text
+
+    def epitaph(self, cause: str, depth: int, turns: int) -> str:
+        """One blocking line on death. The player has stopped playing; a 3s wait
+        is fine here, and it's the only place in the game where that's true.
+
+        Non-fatal: a run ends without an epitaph rather than crashing on the way
+        out.
+        """
+        messages = [
+            {"role": "system", "content": self._system()},
+            {"role": "user", "content":
+                f"A delver died on floor {depth} after {turns} turns. "
+                f"Cause: {cause}. Write ONE sentence marking the death. "
+                "No preamble, no quotation marks."},
+        ]
+        try:
+            text = self._client.complete(
+                messages, self._policy.with_(num_predict=60), kind="epitaph"
+            )
+        except Exception:
+            return ""
+        return " ".join(text.split()).strip('"')

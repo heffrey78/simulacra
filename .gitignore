@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Machine-local Claude Code settings. .claude/settings.json is shared; the
+# .local.json beside it is not.
+.claude/settings.local.json
+
+# Game saves / world databases
+*.db
+*.db-wal
+*.db-shm
+saves/

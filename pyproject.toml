@@ -1,0 +1,33 @@
+[project]
+name = "simulacra"
+version = "0.0.1"
+description = "An endless text dungeon, generated and narrated by a local Ollama model."
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28",
+    "sqlite-vec>=0.1.9",
+    "numpy>=2.1",
+    "rich>=13.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-cov>=6.0"]
+# Optional on purpose: notes.md's first line is "must use minimal resources",
+# and the headless/offline path must not grow a UI framework it never imports.
+tui = ["textual>=8.2"]
+
+[project.scripts]
+simulacra = "simulacra.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/simulacra"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Anything touching a live model is opt-in: `pytest -m llm`
+markers = ["llm: requires a running Ollama daemon"]
+addopts = "-m 'not llm'"
