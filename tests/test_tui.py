@@ -390,18 +390,32 @@ async def test_map_panel_is_built_from_events_and_resets_on_descent():
 
 
 @tui_test
-async def test_a_movement_key_submits_the_string_a_player_could_have_typed():
-    """No bypassing the parser. If a keybinding reached the engine by another
-    route the TUI and the REPL would diverge, and stage-2 inference would stop
-    being exercised."""
+async def test_a_movement_key_alone_does_not_submit():
+    """Movement always requires Enter. An earlier version submitted a bare
+    n/s/e/w the instant it was typed on an empty line, so the first letter of
+    "nudge" or "search" was silently read as a move before the rest of the
+    word existed."""
     engine = ScriptedEngine()
     app = SimulacraApp(engine)
     async with app.run_test() as pilot:
         await app.workers.wait_for_complete()
+        cmd = app.query_one("#cmd", CommandInput)
         await pilot.press("n")
+        await pilot.pause()
+        assert cmd.value == "n"
+        assert engine.asked == []
+
+
+@tui_test
+async def test_a_movement_word_submits_on_enter_like_any_other_verb():
+    engine = ScriptedEngine()
+    app = SimulacraApp(engine)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.press("n", "enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
-    assert engine.asked == ["north"]
+    assert engine.asked == ["n"]
 
 
 @tui_test

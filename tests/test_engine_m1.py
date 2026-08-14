@@ -200,6 +200,22 @@ def test_take_absent_item_is_refused(game):
     assert state.player.inventory == []
 
 
+def test_take_with_a_whitespace_only_target_does_not_grab_the_first_item(game):
+    """A stage-2 misclassification can hand `_take` a near-empty target ("" or
+    " "). An empty needle is a substring of every item name, so without a
+    guard the first item in the room gets silently taken."""
+    engine, state, _ = game
+    list(engine.begin())
+    room = next(r for r in state.floor.rooms.values() if r.items)
+    state.room_id = room.id
+    item = room.items[0]
+
+    events = list(engine._take("   "))
+    assert any(isinstance(e, Notice) for e in events)
+    assert item in room.items
+    assert state.player.inventory == []
+
+
 def test_inventory_reports_empty_then_full(game):
     engine, state, _ = game
     list(engine.begin())

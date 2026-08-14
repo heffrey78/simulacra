@@ -18,3 +18,6 @@ htmlcov/
 *.db-wal
 *.db-shm
 saves/
+
+# Graphify knowledge-graph build output (regenerate with `graphify extract .`)
+graphify-out/

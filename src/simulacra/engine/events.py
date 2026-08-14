@@ -26,7 +26,7 @@ class Event:
 class ProseStart(Event):
     """A block of streamed prose is beginning."""
 
-    channel: Literal["room", "npc", "combat", "system"] = "room"
+    channel: Literal["room", "npc", "combat", "system", "detail"] = "room"
     speaker: str | None = None
 
 

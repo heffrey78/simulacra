@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from simulacra.engine.parser import VERB_ALIASES, parse
+from simulacra.engine.parser import VERB_ALIASES, infer, parse
+
+from conftest import FakeClient
 
 
 @pytest.mark.parametrize(
@@ -25,12 +27,18 @@ from simulacra.engine.parser import VERB_ALIASES, parse
         ("talk to the archivist", "talk", "archivist"),
         # Intransitives ignore trailing words rather than failing.
         ("look", "look", ""), ("look around", "look", ""), ("l", "look", ""),
+        ("look here", "look", ""), ("look about", "look", ""),
+        # But looking at something specific keeps the target.
+        ("look at the offcut", "look", "offcut"), ("examine offcut", "look", "offcut"),
+        ("x lamp", "look", "lamp"), ("inspect the ration", "look", "ration"),
         ("inventory", "inventory", ""), ("i", "inventory", ""),
         ("wait", "wait", ""), ("z", "wait", ""),
         ("quit", "quit", ""), ("q", "quit", ""), ("exit", "quit", ""),
         ("descend", "descend", ""), ("stairs", "descend", ""),
         # Attack.
         ("attack ghoul", "attack", "ghoul"), ("kill the duplicate", "attack", "duplicate"),
+        ("punch offcut", "attack", "offcut"), ("kick the offcut", "attack", "offcut"),
+        ("karate chop offcut", "attack", "offcut"), ("drop kick offcut", "attack", "offcut"),
         # Normalisation.
         ("  TAKE   The   Lamp  ", "take", "lamp"),
     ],
@@ -66,3 +74,28 @@ def test_every_alias_in_the_table_parses(alias):
     intent = parse(alias if alias not in {"go", "walk", "head", "move"} else f"{alias} north")
     assert intent is not None, f"alias {alias!r} does not parse"
     assert intent.verb == VERB_ALIASES[alias]
+
+
+# -- stage 2: the LLM fallback ----------------------------------------------
+
+
+def test_infer_distrusts_a_take_target_the_player_never_typed():
+    """A live session had 'karate chop offuct' (a typo) classified as take with
+    a target lifted from the room census ('ration') rather than the input --
+    silently taking an unrelated item. The target must be grounded in what the
+    player actually typed."""
+    client = FakeClient(structured_result={"verb": "take", "target": "ration"})
+    intent = infer("karate chop offuct", "an unspoiled ration is here.", client, None)
+    assert intent.verb == "improvise"
+
+
+def test_infer_trusts_a_take_target_the_player_did_type():
+    client = FakeClient(structured_result={"verb": "take", "target": "lamp"})
+    intent = infer("grab that lamp", "a lamp is here.", client, None)
+    assert intent.verb == "take" and intent.target == "lamp"
+
+
+def test_infer_distrusts_a_use_target_the_player_never_typed():
+    client = FakeClient(structured_result={"verb": "use", "target": "potion"})
+    intent = infer("down it", "a potion is in your pack.", client, None)
+    assert intent.verb == "improvise"

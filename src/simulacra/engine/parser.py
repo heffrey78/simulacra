@@ -46,12 +46,16 @@ class Intent:
 # read as verb "talk" with target "to smith".
 VERB_ALIASES: dict[str, Verb] = {
     "go": "move", "walk": "move", "head": "move", "move": "move",
-    "look": "look", "l": "look", "examine": "look", "x": "look", "inspect": "look",
+    "look at": "look", "look": "look", "l": "look",
+    "examine": "look", "x": "look", "inspect": "look",
     "pick up": "take", "take": "take", "get": "take", "grab": "take",
     # Healing items are unusable without these -- a table entry, not a feature.
     "use": "use", "drink": "use", "apply": "use", "quaff": "use",
     "inventory": "inventory", "inv": "inventory", "i": "inventory",
     "attack": "attack", "hit": "attack", "kill": "attack", "fight": "attack",
+    "punch": "attack", "kick": "attack", "chop": "attack", "strike": "attack",
+    "stab": "attack", "slash": "attack", "swing": "attack", "smack": "attack",
+    "karate chop": "attack", "drop kick": "attack",
     "talk to": "talk", "talk": "talk", "speak": "talk", "ask": "talk",
     "descend": "descend", "stairs": "descend",
     "wait": "wait", "z": "wait",
@@ -66,8 +70,12 @@ _ALIASES_BY_LENGTH: list[tuple[str, str]] = sorted(
 _ARTICLES = frozenset({"the", "a", "an"})
 
 # Verbs that never take a target. Trailing words after these are ignored rather
-# than treated as a parse failure -- "look around" should just look.
-_INTRANSITIVE = frozenset({"look", "inventory", "wait", "quit", "descend"})
+# than treated as a parse failure.
+_INTRANSITIVE = frozenset({"inventory", "wait", "quit", "descend"})
+
+# "look"/"examine" filler that means no specific target -- "look around" must
+# not be read as an attempt to examine something named "around".
+_LOOK_FILLERS = frozenset({"around", "here", "about"})
 
 
 def _normalise(text: str) -> str:
@@ -118,6 +126,9 @@ def parse(text: str) -> Intent | None:
                 return None
             return Intent(verb="move", target=direction.value, raw=raw)
 
+        if verb == "look" and target in _LOOK_FILLERS:
+            target = ""
+
         return Intent(verb=verb, target=target, raw=raw)
 
     return None
@@ -152,6 +163,14 @@ def infer(text: str, room_summary: str, client, policy) -> Intent:
     # A direction the model named as a target still has to be a real direction.
     if verb == "move" and Direction.parse(target) is None:
         verb, target = "improvise", ""
+
+    # take/use act on the target unconditionally (first substring match in the
+    # room/inventory) -- a target the model invented from room context rather
+    # than the player's actual words ("karate chop offuct" -> target "ration",
+    # lifted from the room census) would silently take or use the wrong thing.
+    # Degrading to improvise is safe; the judge just rules on it instead.
+    if verb in ("take", "use") and target and target not in _normalise(text):
+        verb = "improvise"
 
     return Intent(
         verb=verb,  # type: ignore[arg-type]

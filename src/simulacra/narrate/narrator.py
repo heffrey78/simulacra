@@ -227,6 +227,91 @@ class Narrator:
             else:
                 yield room.concept or f"{room.name}."
 
+    def _detail_key(self, kind: str, name: str) -> str:
+        # Keyed on kind+name+theme only, not the room -- the same offcut looks
+        # the same wherever it's fought, and keying per-room would fragment the
+        # cache for no benefit (unlike room prose, which is genuinely per-room).
+        digest = hashlib.sha1(f"{self._theme.name}|{kind}|{name}".encode()).hexdigest()[:8]
+        return f"detail:{kind}:{name}:{digest}"
+
+    def _detail_messages(self, kind: str, name: str, room_concept: str, *, strict: bool = False) -> list[dict]:
+        subject = f"{kind.upper()}: {name}"
+        if room_concept:
+            subject += f"\nROOM: {room_concept}"
+        instruction = (
+            "The player is looking closely at this. Describe it in one or two "
+            "sentences. Do not repeat the labels."
+        )
+        if strict:
+            instruction = (
+                "Write one or two original sentences describing this closely. "
+                "Do NOT copy any line above. Start with a concrete physical "
+                "detail."
+            )
+        return [
+            {"role": "system", "content": self._system()},
+            {"role": "user", "content": f"{subject}\n\n{instruction}"},
+        ]
+
+    def detail(self, kind: str, name: str, room_concept: str = "") -> Iterator[str]:
+        """Stream a close description of one item or actor the player looked
+        at, or replay it instantly from cache.
+
+        Same echo-guard discipline and cache-then-stream shape as `room()`.
+        Looking at the same offcut twice mid-fight must be instant -- a second
+        tier-2 call is exactly the wrong place to spend latency mid-combat.
+        """
+        key = self._detail_key(kind, name)
+        if (cached := self._store.cached_prose(key)) is not None:
+            yield from _as_stream(cached)
+            return
+
+        census = f"{kind.upper()}: {name}"
+        buffer: list[str] = []
+        released = False
+        gen = self._client.stream(
+            self._detail_messages(kind, name, room_concept), self._policy, kind="tier2"
+        )
+        try:
+            for piece in gen:
+                buffer.append(piece)
+                if released:
+                    yield piece
+                    continue
+                head = "".join(buffer)
+                if len(head) >= GUARD_PREFIX_CHARS:
+                    if looks_like_echo(head, census) or looks_degenerate(head):
+                        gen.close()
+                        buffer.clear()
+                        break
+                    released = True
+                    yield head
+        finally:
+            gen.close()
+
+        text = "".join(buffer).strip()
+        if released and text and not looks_like_echo(text, census) and not looks_degenerate(text):
+            with self._lock:
+                self._store.cache_prose(key, text)
+            return
+
+        if not released:
+            retry_gen = self._client.stream(
+                self._detail_messages(kind, name, room_concept, strict=True),
+                self._policy, kind="tier2",
+            )
+            try:
+                parts = list(retry_gen)
+            finally:
+                retry_gen.close()
+            retry = "".join(parts).strip()
+            if retry and not looks_like_echo(retry, census) and not looks_degenerate(retry):
+                with self._lock:
+                    self._store.cache_prose(key, retry)
+                yield from _as_stream(retry)
+            else:
+                yield f"Nothing more to notice about {name}."
+
     def npc(self, npc, player_line: str, recollections: list) -> Iterator[str]:
         """Stream NPC speech, conditioned on what this NPC actually remembers.
 

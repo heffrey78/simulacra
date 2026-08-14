@@ -84,9 +84,6 @@ _FLUSH_INTERVAL = 0.12
 _SPINNER_INTERVAL = 0.2
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-_MOVE_KEYS = {"n": "north", "s": "south", "e": "east", "w": "west"}
-
-
 # -- the map ---------------------------------------------------------------
 
 
@@ -320,13 +317,13 @@ class StatusPanel(Static):
 
 
 class CommandInput(Input):
-    """Adds two things the REPL has never had: command history, and single-key
-    movement when the line is empty.
+    """Adds one thing the REPL has never had: command history.
 
-    A movement key *fills in the line and submits it*, so what reaches the
-    engine is a string the player could have typed. Bypassing the parser here
-    would let the TUI and the REPL diverge in behaviour and would stop
-    exercising stage-2 inference.
+    Every keystroke, including n/s/e/w, is just a letter -- movement always
+    goes through the normal parser on Enter, like any other verb. An earlier
+    version submitted a bare n/s/e/w the instant it was typed on an empty
+    line, which meant the first letter of "nudge" or "search" was silently
+    read as a move and submitted before the rest of the word existed.
     """
 
     def __init__(self, **kwargs) -> None:
@@ -344,13 +341,6 @@ class CommandInput(Input):
         self._at = len(self.history)
 
     async def _on_key(self, event) -> None:
-        if not self.value and event.key in _MOVE_KEYS:
-            event.stop()
-            event.prevent_default()
-            self.value = _MOVE_KEYS[event.key]
-            await self.action_submit()
-            return
-
         if event.key in ("up", "down") and self.history:
             event.stop()
             event.prevent_default()

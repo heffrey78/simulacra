@@ -312,6 +312,26 @@ still reading 23/23 when the log said the killing blow landed. The REPL hides
 this because a stale line has already scrolled away. Fixed without touching the
 engine — `Damage.hp_left` is the player's hp and was already in the stream.
 
+**POC closeout — bugfixes + one feature** 🚧 *in progress* ·
+**[task breakdown →](../tasks/poc-closeout-tasks.md)**
+Found by playing the finished POC, ahead of M6. TUI single-key movement was
+submitting on the first keystroke of an empty line — before Enter, and before
+the rest of the word — so anything starting with n/s/e/w (a "nudge", a
+"search") turned into an unwanted move. The stage-2 parser fallback (48
+tokens, `Settings.intent`) is intermittently misrouting creative attack
+phrasing ("karate chop X") to `take` instead of `attack`/`improvise` — the
+engine never actually loses track of a monster's hp, the verb is just
+misfiled. And `look` has no way to ask about a specific item, NPC, or
+monster; it can only re-describe the whole room.
+
+The conversation system also needs work: recall is topic-blind (always
+embeds a fixed "how did the delver die" query, never the player's actual
+question) and every dialogue turn is stateless, so an NPC restates the same
+fact regardless of what's asked and can't tell it already said so two
+replies ago. Documented in
+[conversation-system.md](../conversation-system.md); fixes scoped in
+**[conversation-improvements-tasks.md →](../tasks/conversation-improvements-tasks.md)**.
+
 **M6+ — Deferred, deliberately**
 Tool calling in the loop · thinking experiments (batch-time only,
 e.g. offline floor pre-generation, where 30 s is free) · richer graph queries ·

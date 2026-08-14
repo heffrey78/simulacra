@@ -201,3 +201,53 @@ def test_degenerate_room_prose_is_rejected(floor, theme, store):
     narrator = make(client, theme, store)
     out = "".join(narrator.room(floor, floor.room(floor.entrance_id)))
     assert out == GOOD
+
+
+# -- detail (look at <target>) ----------------------------------------------
+
+DETAIL = "Its shell is cracked along one seam, still leaking something dark."
+
+
+def test_detail_reaches_the_player_intact(theme, store):
+    client = FakeClient(script=[DETAIL])
+    narrator = make(client, theme, store)
+    assert "".join(narrator.detail("actor", "an offcut", "a flooded gallery")) == DETAIL
+
+
+def test_looking_at_the_same_thing_twice_costs_no_second_model_call(theme, store):
+    client = FakeClient(script=[DETAIL])
+    narrator = make(client, theme, store)
+
+    first = "".join(narrator.detail("item", "an unspoiled ration"))
+    calls = client.stream_calls
+    second = "".join(narrator.detail("item", "an unspoiled ration"))
+
+    assert first == second == DETAIL
+    assert client.stream_calls == calls, "looking at it again re-generated the detail"
+
+
+def test_detail_cache_is_independent_of_room_context(theme, store):
+    """Keyed on kind+name only -- the same offcut looks the same wherever it's
+    fought, so a second look in a different room must still hit cache."""
+    client = FakeClient(script=[DETAIL])
+    narrator = make(client, theme, store)
+
+    "".join(narrator.detail("actor", "an offcut", "a flooded gallery"))
+    calls = client.stream_calls
+    "".join(narrator.detail("actor", "an offcut", "a completely different room"))
+
+    assert client.stream_calls == calls
+
+
+def test_an_echoing_detail_reply_is_rejected(theme, store):
+    client = FakeClient(script=["ACTOR: an offcut\nROOM: a flooded gallery", DETAIL])
+    narrator = make(client, theme, store)
+    out = "".join(narrator.detail("actor", "an offcut", "a flooded gallery"))
+    assert out == DETAIL
+
+
+def test_detail_falls_back_without_showing_the_player_an_error(theme, store):
+    client = FakeClient(script=["ACTOR: an offcut"])  # always an echo
+    narrator = make(client, theme, store)
+    out = "".join(narrator.detail("actor", "an offcut"))
+    assert out and "ACTOR" not in out

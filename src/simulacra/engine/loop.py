@@ -120,7 +120,7 @@ class Engine:
             case "move":
                 yield from self._move(intent.target)
             case "look":
-                yield from self._look()
+                yield from self._look(intent.target)
             case "take":
                 yield from self._take(intent.target)
             case "use":
@@ -206,7 +206,11 @@ class Engine:
         self._resolved = True
         yield from self._enter_room(dest, via=direction.value)
 
-    def _look(self) -> Iterator[Event]:
+    def _look(self, target: str = "") -> Iterator[Event]:
+        if target:
+            yield from self._look_at(target)
+            return
+
         room = self.state.room
         yield RoomEntered(
             room_id=room.id, name=room.name,
@@ -215,8 +219,37 @@ class Engine:
         yield from self._describe(room)
         yield from self._contents(room)
 
+    def _look_at(self, target: str) -> Iterator[Event]:
+        """Detail on one specific item or actor, generated on demand and
+        cached. Free like the whole-room look -- eyeballing something isn't an
+        action, so it never sets `_resolved` and never provokes."""
+        room = self.state.room
+        needle = target.lower()
+
+        item = next((i for i in room.items if needle in i.name.lower()), None)
+        if item is not None:
+            yield from self._describe_detail("item", item.name)
+            return
+
+        actor = next((a for a in room.actors if needle in a.name.lower()), None)
+        if actor is not None:
+            yield from self._describe_detail("actor", actor.name)
+            return
+
+        yield Notice(f"You don't see {target} here.")
+
+    def _describe_detail(self, kind: str, name: str) -> Iterator[Event]:
+        if self.narrator is None:
+            yield Line(f"Nothing more to notice about {name}.")
+            return
+
+        yield ProseStart(channel="detail")
+        for piece in self.narrator.detail(kind, name, self.state.room.concept):
+            yield ProseDelta(piece)
+        yield ProseEnd()
+
     def _take(self, target: str) -> Iterator[Event]:
-        if not target:
+        if not target or not target.strip():
             yield Notice("Take what?")
             return
 
@@ -235,7 +268,7 @@ class Engine:
 
     def _use(self, target: str) -> Iterator[Event]:
         player = self.state.player
-        if not target:
+        if not target or not target.strip():
             yield Notice("Use what?")
             return
 
