@@ -324,12 +324,15 @@ engine never actually loses track of a monster's hp, the verb is just
 misfiled. And `look` has no way to ask about a specific item, NPC, or
 monster; it can only re-describe the whole room.
 
-The conversation system also needs work: recall is topic-blind (always
-embeds a fixed "how did the delver die" query, never the player's actual
-question) and every dialogue turn is stateless, so an NPC restates the same
-fact regardless of what's asked and can't tell it already said so two
-replies ago. Documented in
-[conversation-system.md](../conversation-system.md); fixes scoped in
+The conversation system also needs work. Recall was topic-blind — it always
+embedded a fixed "how did the delver die" query rather than the player's
+actual question — which T1 fixes: an NPC now recalls against the topic the
+player named, falling back to the death query only when they named none.
+Still open: the prompt recites a recollection whether or not it answers the
+question (no way to say "I don't know"), and every dialogue turn is
+stateless, so an NPC can't tell it already said the same thing two replies
+ago. Documented in [conversation-system.md](../conversation-system.md); fixes
+scoped in
 **[conversation-improvements-tasks.md →](../tasks/conversation-improvements-tasks.md)**.
 
 **M6+ — Deferred, deliberately**

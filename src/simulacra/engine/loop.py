@@ -45,6 +45,20 @@ from .state import persist_floor
 # and a small model handed six memories recites a list instead of speaking.
 RECALL_LIMIT = 3
 
+# What an NPC reaches for when the player gives it nothing to go on. Phrased
+# about outcomes, not conversations: "who spoke with X" ranked the NPC's own
+# past conversations above an actual death, because those memories are
+# literally about speaking.
+DEATH_QUERY = "How did the previous delver die, and on which floor?"
+
+# "talk to archivist" and "ask archivist about the arm" arrive at _talk() as
+# one string, verb stripped -- address and topic together. Splitting them takes
+# two passes because the two kinds of connective sit on opposite sides of the
+# name: "to archivist" is pure address (topic: nothing), while "about
+# archivist" is a topic that happens to be the NPC.
+_ADDRESS_WORDS = frozenset({"to", "with", "at"})
+_TOPIC_WORDS = frozenset({"about", "for", "on", "regarding", "re"})
+
 # M1 placeholder prose, one line per structural role. Deliberately flat: this is
 # the text the narrator replaces in M2, and it should be obvious that it is a
 # placeholder rather than quietly acceptable.
@@ -57,6 +71,22 @@ _KIND_BLURB = {
     RoomKind.SHRINE: "This room was made with more care than the rest.",
     RoomKind.DESCENT: "Stairs drop away into the dark.",
 }
+
+
+def _topic_of(target: str, npc_name: str) -> str:
+    """The part of what the player typed that is a subject, not an address.
+
+    Three passes, in order, each only at the head of the string: address words,
+    the NPC's own name, topic words. Order is what separates "to archivist"
+    (nothing asked) from "about archivist" (asked about themselves), and only
+    stripping at the head keeps "ask archivist about the archivist's ledger"
+    from losing its subject.
+    """
+    words = target.lower().split()
+    for stopset in (_ADDRESS_WORDS, set(npc_name.lower().split()), _TOPIC_WORDS):
+        while words and words[0] in stopset:
+            words.pop(0)
+    return " ".join(words)
 
 
 class Engine:
@@ -338,7 +368,7 @@ class Engine:
             yield Notice("They have nothing to say.")
             return
 
-        recollections = self._recall_for(actor.id)
+        recollections = self._recall_for(actor.id, _topic_of(target, actor.name))
         actor.recollections = [r.text for r in recollections]
 
         # Talking is a resolved action, so anything hostile in the room gets its
@@ -373,18 +403,21 @@ class Engine:
     def _personas(self) -> dict:
         return {n.anchor: n for n in self.theme.npcs}
 
-    def _recall_for(self, anchor: str) -> list:
+    def _recall_for(self, anchor: str, question: str = "") -> list:
         """Graph-anchored, then semantically ranked. Prior runs only.
 
         `exclude_run` is not optional: without it an NPC 'remembers' something
         from four turns ago as though it were a past life.
+
+        `question` is the player's topic, already stripped of the NPC's name by
+        `_topic_of` -- embedding "archivist about the arm" would put the name in
+        every query alike and rank on the noise. Empty means the player named no
+        topic ("talk to archivist"), and an NPC with nothing to go on should
+        volunteer the most important thing it knows, which is DEATH_QUERY.
         """
         if self.client is None:
             return []
-        # Phrased about outcomes, not conversations. "Who spoke with X" ranked
-        # the NPC's own past conversations above an actual death, because those
-        # memories are literally about speaking.
-        query = "How did the previous delver die, and on which floor?"
+        query = question.strip() or DEATH_QUERY
         try:
             embedding = self.client.embed([query], self.settings.embed)[0]
         except Exception:
