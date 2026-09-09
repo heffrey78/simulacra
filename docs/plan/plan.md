@@ -332,13 +332,26 @@ Still open: the prompt recites a recollection whether or not it answers the
 question (no way to say "I don't know"), and every dialogue turn is
 stateless, so an NPC can't tell it already said the same thing two replies
 ago. Documented in [conversation-system.md](../conversation-system.md); fixes
-scoped in
-**[conversation-improvements-tasks.md →](../tasks/conversation-improvements-tasks.md)**.
+were scoped in
+**[conversation-improvements-tasks.md →](../tasks/conversation-improvements-tasks.md)**,
+of which T1 shipped and **T2/T3 are superseded by [systems.md](systems.md)**.
 
-**M6+ — Deferred, deliberately**
-Tool calling in the loop · thinking experiments (batch-time only,
-e.g. offline floor pre-generation, where 30 s is free) · richer graph queries ·
-larger models if the hardware changes.
+**M6+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
+The POC's conversation work stalled for a structural reason, not a tuning one:
+the memory system has exactly one class of content in it (deaths), the graph is
+written and never read, and the parser's single `target` slot forces an ad-hoc
+address/topic splitter into the talk handler. [systems.md](systems.md) reviews
+that and lays out five systems — a persistent world, typed canon with
+provenance, retrieval routes, conversation sessions, and one action vocabulary —
+across M6–M10. **T2 and T3 below are cancelled by it**, not deferred: routes
+delete T2's threshold-calibration problem outright, and T3 is a weaker version
+of the session object.
+
+Still deferred within that plan: thinking experiments (batch-time only, e.g.
+derived-canon generation, where 30 s is free) and larger models if the hardware
+changes. Tool calling stays built and unused on purpose — systems.md §8 argues
+constrained structured output delivers the same architecture at the reliability
+this hardware actually has.
 
 ---
 

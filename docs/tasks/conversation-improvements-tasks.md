@@ -8,6 +8,13 @@
 > (M4-tasks.md, Finding 2) and deserves its own design pass, not a closeout
 > item.
 
+> **Status: T1 shipped (`2893530`). T2 and T3 are cancelled**, superseded by
+> [systems.md](../plan/systems.md) — see its §0. Routes (§6) make T2's
+> recall-distance threshold unnecessary rather than tuned, and the conversation
+> session (§7) is a strictly stronger version of T3's scratch buffer. Both
+> sections below are kept for the analysis in them, which fed the new design;
+> neither should be implemented as written.
+
 **Goal:** the Archivist should answer the question actually asked, not
 recite the same death fact regardless of topic; should be able to say "I
 don't know" instead of forcing an answer; and should not repeat itself
@@ -87,6 +94,9 @@ the whole line, it's only recall that wants the topic alone.
 
 ## T2 — Say "I don't know" instead of forcing an answer
 
+**Cancelled — superseded by [systems.md §6](../plan/systems.md#6-s2--retrieval-routes).** A route that resolves to an empty set *is* "I don't know", so the threshold this task exists to calibrate has nothing left to gate. The distance-signal analysis below is still correct and is why the route design avoids the signal entirely.
+
+
 **Files:** [engine/loop.py](../../src/simulacra/engine/loop.py) (`_talk`),
 [narrate/narrator.py](../../src/simulacra/narrate/narrator.py) (`npc`)
 
@@ -150,6 +160,9 @@ produces the "don't know" branch (assert on prompt contents sent to
 ---
 
 ## T3 — Short-lived in-conversation memory
+
+**Cancelled — superseded by [systems.md §7](../plan/systems.md#7-s3--conversation-session).** The session object tracks *which facts* have been spoken rather than a window of raw text, so non-repetition is decided in code instead of asked of a 1.7b model. T3's constraint — scratch state never touches `Store` — is carried over unchanged.
+
 
 **Files:** [engine/loop.py](../../src/simulacra/engine/loop.py) (`Engine`,
 `_talk`), [narrate/narrator.py](../../src/simulacra/narrate/narrator.py) (`npc`)
