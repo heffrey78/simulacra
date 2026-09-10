@@ -63,10 +63,17 @@ class Theme:
     rooms: dict[str, list[str]] = field(default_factory=dict)
     monsters: dict[str, list[list]] = field(default_factory=dict)
     items: dict[str, list[list]] = field(default_factory=dict)
+    # Things plausibly found in a room of each kind, beyond whatever the
+    # director happened to mention. Structure is code's; names are the
+    # theme's -- the same rule as `rooms` and `monsters`.
+    fixtures: dict[str, list[str]] = field(default_factory=dict)
     npcs: list[Npc] = field(default_factory=list)
 
     def room_names(self, kind: RoomKind) -> list[str]:
         return self.rooms.get(kind.value) or [kind.value]
+
+    def fixture_names(self, kind: RoomKind) -> list[str]:
+        return self.fixtures.get(kind.value) or []
 
     def style_note(self, *, motifs: bool = True) -> str:
         """Compact style rider appended to generation prompts.
@@ -103,6 +110,7 @@ class Theme:
             rooms=d.get("rooms", {}),
             monsters=d.get("monsters", {}),
             items=d.get("items", {}),
+            fixtures=d.get("fixtures", {}),
             npcs=[
                 Npc(
                     anchor=n["anchor"], name=n["name"], role=n["role"], voice=n["voice"],

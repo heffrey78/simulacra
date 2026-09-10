@@ -411,6 +411,56 @@ class Narrator:
             bad = not text or looks_like_echo(text, user, verbatim=False) or looks_degenerate(text)
             yield "They say nothing." if bad else text
 
+    NOTHING_FOUND = "Nothing comes of the search."
+
+    def discover(self, target: str, room) -> Iterator[str]:
+        """Name what the player turned up. Streamed, guarded, never cached here.
+
+        Not cached in `prose_cache` on purpose: the engine writes the result to
+        the room's canon instead, which is the thing that persists across runs
+        and can be read back as a fact rather than replayed as prose. Two copies
+        of the same text in two stores is how they drift apart.
+
+        Yields `NOTHING_FOUND` when the guards reject the generation, and the
+        caller must then write nothing down -- a rejected generation becoming
+        permanent canon is M7's expensive lesson.
+        """
+        census = f"ROOM: {room.name}\nCONCEPT: {room.concept}\nLOOKING AT: {target}"
+        messages = [
+            {"role": "system", "content": self._system()},
+            {"role": "user", "content":
+                f"{census}\n\nThe player looks closely at the {target}. Write "
+                f"one or two sentences about the {target} itself -- not about "
+                f"the room, and not about anything else in it. It is scenery, "
+                f"not treasure: do not offer it to be taken. Do not repeat the "
+                f"labels."},
+        ]
+
+        buffer: list[str] = []
+        released = False
+        gen = self._client.stream(messages, self._policy, kind="tier2")
+        try:
+            for piece in gen:
+                buffer.append(piece)
+                if released:
+                    yield piece
+                    continue
+                head = "".join(buffer)
+                if len(head) >= GUARD_PREFIX_CHARS:
+                    if looks_like_echo(head, census) or looks_degenerate(head):
+                        gen.close()
+                        buffer.clear()
+                        break
+                    released = True
+                    yield head
+        finally:
+            gen.close()
+
+        if not released:
+            text = "".join(buffer).strip()
+            bad = not text or looks_like_echo(text, census) or looks_degenerate(text)
+            yield self.NOTHING_FOUND if bad else text
+
     def epitaph(self, cause: str, depth: int, turns: int) -> str:
         """One blocking line on death. The player has stopped playing; a 3s wait
         is fine here, and it's the only place in the game where that's true.

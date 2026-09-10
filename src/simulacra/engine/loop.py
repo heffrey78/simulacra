@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from ..world import discovery
 from ..world.director import direct_floor
 from ..world.floorgen import floor_rng, generate_floor
 from ..world.model import Direction, Item, Room, RoomKind
@@ -326,7 +327,86 @@ class Engine:
             yield from self._describe_detail("actor", actor.name)
             return
 
-        yield Notice(f"You don't see {target} here.")
+        yield from self._search(target)
+
+    # -- discovery ---------------------------------------------------------
+
+    def _room_canon(self) -> list:
+        try:
+            return self.store.canon(f"room:{self.state.room_id}", provenance="derived")
+        except Exception:
+            return []
+
+    def _search(self, target: str) -> Iterator[Event]:
+        """The player looked at something the room does not list.
+
+        Before M10 this was always "You don't see that here" -- including for
+        nouns the room's own prose had just used, which is the engine
+        contradicting what the player read.
+        """
+        room = self.state.room
+        wanted = discovery.words(target)
+
+        # Found before? Then it is still there, and still the same thing. A room
+        # that invents a different altar every visit is worse than one with no
+        # altar at all.
+        #
+        # Looked up by *what was searched for*, not by word overlap with the
+        # description: measured live, `look at the surface` replayed the door,
+        # because the door's description happened to use the word "surface".
+        index = self.store.node_data(f"room:{self.state.room_id}").get("found") or {}
+        for word in wanted:
+            if (row := self.store.canon_by_id(index.get(word))) is not None:
+                yield ProseStart(channel="detail")
+                yield ProseDelta(row["text"])
+                yield ProseEnd()
+                return
+        found = self._room_canon()
+
+        if self.narrator is None:
+            yield Notice(f"You don't see {target} here.")
+            return
+
+        if len(found) >= discovery.DISCOVERY_BUDGET:
+            # Exhausted. No roll, no call -- the budget caps new content, not
+            # access to what is already there.
+            yield Notice(f"You don't see {target} here.")
+            return
+
+        if discovery.grade(target, room, self.theme,
+                           world_seed=self.state.world_seed) == "absent":
+            yield Notice(f"You don't see {target} here.")
+            return
+
+        # Rummaging is not eyeballing. A plain `look` stays free and never
+        # provokes; searching until you turn something up takes a turn, and
+        # doing it with something hostile in the room should cost you.
+        self._resolved = True
+
+        yield ProseStart(channel="detail")
+        parts: list[str] = []
+        for piece in self.narrator.discover(target, room):
+            parts.append(piece)
+            yield ProseDelta(piece)
+        yield ProseEnd()
+
+        text = "".join(parts).strip()
+        if not text or text == self.narrator.NOTHING_FOUND:
+            # A rejected generation must not become permanent canon: canon
+            # outlives the run, and M7 paid a live five-run read to learn it.
+            return
+        try:
+            node = f"room:{self.state.room_id}"
+            canon_id = self.store.add_canon(node, text, "derived",
+                                            source_run=self.state.run_id)
+            # Every word of what they typed points at this find, so "the cracked
+            # altar" and "altar" both reach it later.
+            data = self.store.node_data(node)
+            data["found"] = {**(data.get("found") or {}),
+                             **{w: canon_id for w in wanted}}
+            self.store.set_node_data(node, data)
+        except Exception:
+            pass
 
     def _describe_detail(self, kind: str, name: str) -> Iterator[Event]:
         if self.narrator is None:
@@ -845,13 +925,23 @@ class Engine:
         the whole M1 test suite still exercises it.
         """
         if self.narrator is None:
-            yield Line(room.concept or _KIND_BLURB[room.kind])
+            room.prose = room.concept or _KIND_BLURB[room.kind]
+            yield Line(room.prose)
             return
 
         yield ProseStart(channel="room")
+        parts: list[str] = []
         for piece in self.narrator.room(self.state.floor, room):
+            parts.append(piece)
             yield ProseDelta(piece)
         yield ProseEnd()
+
+        # `Room.prose` and `Room.described` were declared in M1 and nothing ever
+        # wrote to them -- the text lived only in `prose_cache`, keyed by a hash.
+        # M10 needs it: the player reads the *prose*, so the nouns they can look
+        # at have to come from the prose and not only from the director's
+        # one-line concept.
+        room.prose = "".join(parts).strip()
 
     def _contents(self, room: Room) -> Iterator[Event]:
         """Items and actors. Separate from prose: in M2 the narrator may mention

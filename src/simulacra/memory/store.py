@@ -788,6 +788,15 @@ class Store:
         with self._lock:
             return self.db.execute(q, args).fetchall()
 
+    def canon_by_id(self, canon_id) -> sqlite3.Row | None:
+        """One active canon row by id, or None. `canon_id` may be None."""
+        if canon_id is None:
+            return None
+        with self._lock:
+            return self.db.execute(
+                "SELECT * FROM canon WHERE id = ? AND status = 'active'", (canon_id,)
+            ).fetchone()
+
     def retire_canon(
         self, node_id: str, *, provenance: str | Iterable[str] | None = None,
         keep_newest: int | None = None,

@@ -459,7 +459,45 @@ silently. M7's canonist had no output guard, M8's echo guard had the wrong rule
 for dialogue, M9's node touch had the wrong default. None was caught by a test
 written at the time; all three were caught by playing it.
 
-**M10 — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
+**M10 — Lazy world expansion** ✅ *done* · **[task record →](../tasks/M10-discovery-tasks.md)**
+The last one in [systems.md](systems.md), and the one that closes the arc M6
+opened: a world cheap to re-walk needs a reason to re-walk it.
+
+The narrator has been writing *"a cracked altar stands against the far wall"*
+since M2, and `look at the altar` answered *"You don't see altar here."* The room
+told the player what was in it and the engine disagreed. Now a noun the room's
+own prose used is always findable, a fixture from the theme's per-kind pool is
+findable if the room is fertile (rolled once per **room**, so retyping never
+helps), and what turns up is written as canon on the `room:` node — the same
+table M7 built for NPCs, used for the first time by something that is not one.
+A second look replays it for free, and floors persisting since M6 means that
+holds three runs later. A room is finished after three finds; code owns how many
+and the model owns what.
+
+Plausibility is graded in code, with no model call, which is what keeps `look`
+free. A *discovery* does provoke — rummaging until you turn something up is not
+eyeballing, and doing it with something hostile in the room should cost you.
+
+**And a field declared in M1 that nothing had ever written to.** `Room.prose`
+and `Room.described` have existed since the first milestone; the narrator's text
+lived only in `prose_cache`, keyed by a hash. So grading against the prose was
+grading against an empty string, and only nouns from the director's one-line
+concept worked. `_describe` now records what it streamed.
+
+That is the third of that shape in five milestones — `Store.neighbors` sat
+unused until M8, `disposition` and `inventory` until M9, `Room.prose` until now.
+Writing the slot early has repeatedly been the right call; the cost is that "it
+exists" and "it works" drift apart quietly, and only playing it tells them
+apart.
+
+---
+
+**The plan is complete.** M6–M10 are done, each with findings. Deferred within
+it: thinking experiments (batch-time only), contradiction detection between
+canon rows, and larger models if the hardware changes. `chat_with_tools` remains
+built and unused on purpose — [systems.md §8](systems.md#8-s4--action-vocabulary),
+amended by M9, argues constrained structured output delivers the same
+architecture at the reliability this hardware actually has.
 The POC's conversation work stalled for a structural reason, not a tuning one:
 the memory system has exactly one class of content in it (deaths), the graph is
 written and never read, and the parser's single `target` slot forces an ad-hoc

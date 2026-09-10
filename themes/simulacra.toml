@@ -53,6 +53,18 @@ weak   = [["a smudged figure", 6, 2, 10], ["a partial", 5, 2, 9], ["an offcut", 
 normal = [["a duplicate", 12, 3, 12], ["the worn attendant", 14, 3, 11]]
 strong = [["a compound thing", 22, 5, 14], ["the Overprint", 26, 6, 13]]
 
+# What a room of each kind plausibly holds, beyond whatever the director wrote
+# into its concept. Looking at one of these may find something; looking at a
+# noun the room's own prose already used always does.
+[fixtures]
+entrance = ["the threshold", "the doorway", "scuff marks", "a boot scraper"]
+corridor = ["the seam", "the wall", "a join", "worn flagstones"]
+chamber  = ["a workbench", "drafts", "offcuts", "a rack of formes"]
+vault    = ["shelves", "a strongbox", "ledgers", "wax seals"]
+lair     = ["a nest", "bones", "spoil", "scratch marks"]
+shrine   = ["an altar", "offerings", "a basin", "carvings"]
+descent  = ["the stair", "the rail", "a landing", "handprints"]
+
 [items]
 weapon  = [["a stuttering blade", 4], ["a copyist's knife", 3]]
 healing = [["a jar of clean water", 6], ["an unspoiled ration", 4]]

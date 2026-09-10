@@ -436,11 +436,16 @@ look at the shelves
   │
   ├─ known entity in room/inventory?      → describe it (today's behaviour)
   │
-  ├─ plausible slot for this room?         ← room kind + concept + canon, code
+  ├─ found here before?                    → replay it, no model call
   │
-  ├─ RNG gate on fertility                 ← code owns the odds
+  ├─ a noun the room's own prose used?     ← always findable. M10 built it here
+  │                                          rather than from a slot list: the
+  │                                          director had been naming things
+  │                                          since M2 and the engine denied them
   │
-  ├─ tier-2 call names what is found       ← model owns the content
+  ├─ else a fixture for this room kind?    ← theme pool, RNG per *room*
+  │
+  ├─ tier-2 call describes it              ← model owns the content
   │
   └─ written as room canon, provenance `derived`
 ```
@@ -467,7 +472,7 @@ floorgen/director throughout: **structure is code's, identity is the model's.**
 | **M7** ✅ | Canon | S1 — `canon` table, provenance, persistent NPC entities, derived-canon refresh | **Met.** The Archivist now counts its dead, grown from deaths rather than authored |
 | **M8** ✅ | Routes + session | S2 + S3, and the parser's topic slot | **Met.** Ten questions, ten answers, from five sources; 90–100% of routes cost nothing |
 | **M9** ✅ | Action vocabulary | S4 — trade, gifts, NPC movement, disposition | **Met.** A gift unlocks the NPC's derived canon, live |
-| **M10** | Lazy expansion | S5 — slots, budget, discovery-as-canon | A shelf found on run 1 is still there on run 4 |
+| **M10** ✅ | Lazy expansion | S5 — slots, budget, discovery-as-canon | **Met.** A noun the room's prose used is findable, and still there next run |
 
 M8 is one milestone containing two systems on purpose. Routes without a session
 still repeat facts; a session without routes has nothing worth deduping. They are
@@ -478,8 +483,10 @@ Task decomposition follows the existing convention — one `docs/tasks/M<n>-*.md
 per milestone, written before implementation and amended with findings after.
 [M6](../tasks/M6-persistent-world-tasks.md),
 [M7](../tasks/M7-canon-tasks.md),
-[M8](../tasks/M8-routes-tasks.md) and
-[M9](../tasks/M9-action-vocabulary-tasks.md) are **done, with findings**.
+[M8](../tasks/M8-routes-tasks.md),
+[M9](../tasks/M9-action-vocabulary-tasks.md) and
+[M10](../tasks/M10-discovery-tasks.md) are **done, with findings**.
+**The plan is complete.**
 
 ---
 
