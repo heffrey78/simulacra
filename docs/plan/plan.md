@@ -363,7 +363,35 @@ contradiction of the invariant `state.py` documents. And `Store.link()` has
 offered `run_id=None` since M0 without it ever being insertable: `edges` is
 `WITHOUT ROWID`, which makes primary-key columns implicitly `NOT NULL`.
 
-**M7+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
+**M7 — Canon** ✅ *done* · **[task record →](../tasks/M7-canon-tasks.md)**
+NPCs stop having only deaths to talk about. A `canon` table carries typed
+knowledge with provenance — `authored` from the theme pack, `derived` written up
+at exit from authored canon plus episodic memory, `told` asserted by the player
+and repeated as hearsay. `generated` prose is never persisted at all, which is
+what closes M4's self-quotation loop structurally rather than by starvation, and
+derived canon is grown only from authored and observed, which caps generation
+depth at exactly 1 so canon cannot drift by compounding on itself.
+
+NPCs became residents: seeded into the graph at world creation with a home,
+a disposition and an inventory, placed from stored state rather than by
+`floorgen`, and a second NPC (the Corrector, floor 3) makes canon anchoring
+falsifiable for the first time.
+
+**One bug no test could have found.** The narrator has had `looks_degenerate`
+since M4, but it guards streamed prose — the canonist wrote structured output
+straight into a table that outlives the run. The first live five-run read
+produced *"The Archivist's ledger is currently marked with 123456789."* as
+permanent canon. A bad line of narration scrolls away; a bad line of canon is in
+every conversation that NPC ever has again.
+
+**Input selection turned out to matter more than prompt wording.** Canon grown
+from dialogue transcripts circled one noun and contradicted itself, because a
+transcript records the shape of a question and not its answer. Preferring deaths
+and discoveries, the same model started accumulating: *"entries for three
+delvers who died on floor 1"* at run 3, *"six delvers killed on floor 1"* at run
+5. It began counting, which is the Archivist's authored role.
+
+**M8+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
 The POC's conversation work stalled for a structural reason, not a tuning one:
 the memory system has exactly one class of content in it (deaths), the graph is
 written and never read, and the parser's single `target` slot forces an ad-hoc

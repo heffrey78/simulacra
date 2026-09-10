@@ -327,7 +327,7 @@ def test_forget_removes_one_npcs_memories_and_no_one_elses(tmp_path):
     store.remember(1, "the warden watched a different one", subjects=["npc:warden"])
     store.commit()
 
-    assert store.forget("npc:archivist") == 1
+    assert store.forget("npc:archivist") == (1, 0)
     left = [r["text"] for r in store.db.execute("SELECT text FROM memories")]
     assert left == ["the warden watched a different one"]
     store.close()
@@ -340,7 +340,7 @@ def test_forget_keeps_a_memory_another_node_still_claims(tmp_path):
     store.remember(1, "a delver died here", subjects=["npc:archivist", "room:d1r3"])
     store.commit()
 
-    assert store.forget("npc:archivist") == 0
+    assert store.forget("npc:archivist") == (0, 0)
     assert store.recall(about="room:d1r3", limit=3)[0].text == "a delver died here"
     assert store.recall(about="npc:archivist", limit=3) == []
     store.close()

@@ -449,7 +449,7 @@ floorgen/director throughout: **structure is code's, identity is the model's.**
 | | Milestone | Contents | Gate |
 |---|---|---|---|
 | **M6** ✅ | Persistent world + reset | S0 — world table, seed split, recompute-and-reattach, `--new-world` / `--forget` | **Met.** Run 2 reached floor 3 with 0 model calls and 0.0 s of wall time |
-| **M7** | Canon | S1 — `canon` table, provenance, persistent NPC entities, derived-canon refresh | An NPC has a backstory that is not a death |
+| **M7** ✅ | Canon | S1 — `canon` table, provenance, persistent NPC entities, derived-canon refresh | **Met.** The Archivist now counts its dead, grown from deaths rather than authored |
 | **M8** | Routes + session | S2 + S3, and the parser's topic slot | Eight questions, eight answers, one fact said once |
 | **M9** | Action vocabulary | S4 — trade, gifts, NPC movement, disposition | A gift changes what an NPC will tell you |
 | **M10** | Lazy expansion | S5 — slots, budget, discovery-as-canon | A shelf found on run 1 is still there on run 4 |
@@ -461,8 +461,8 @@ alone would read as no improvement.
 
 Task decomposition follows the existing convention — one `docs/tasks/M<n>-*.md`
 per milestone, written before implementation and amended with findings after.
-[M6](../tasks/M6-persistent-world-tasks.md) is **done, with findings**;
-[M7](../tasks/M7-canon-tasks.md) is scoped.
+[M6](../tasks/M6-persistent-world-tasks.md) and
+[M7](../tasks/M7-canon-tasks.md) are **done, with findings**.
 
 ---
 

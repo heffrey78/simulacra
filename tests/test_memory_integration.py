@@ -165,14 +165,20 @@ def test_memories_are_selective_not_per_turn(store, theme):
 
 def test_the_npc_is_the_same_graph_node_across_runs(store, theme):
     """A generated id per run would silently make a new NPC every time and the
-    whole milestone would quietly do nothing."""
+    whole milestone would quietly do nothing.
+
+    Since M7 the roster is seeded at world creation, so the count is the roster
+    size from the start -- what must not change is that a second run adds none."""
+    counts = []
     for seed in (42, 7):
         client = Recording(script=[REPLY])
         play(store, theme, seed=seed, client=client)
+        counts.append(
+            store.db.execute("SELECT count(*) FROM nodes WHERE kind='npc'").fetchone()[0]
+        )
 
-    rows = store.db.execute(
-        "SELECT count(*) FROM nodes WHERE kind='npc'").fetchone()[0]
-    assert rows == 1, f"{rows} npc nodes after two runs"
+    assert counts[0] == len(theme.npcs), f"{counts[0]} npc nodes for {len(theme.npcs)} roster entries"
+    assert counts[0] == counts[1], f"a second run added {counts[1] - counts[0]} npc nodes"
 
 
 def test_a_death_outranks_chatter_in_what_the_npc_is_told(store, theme):

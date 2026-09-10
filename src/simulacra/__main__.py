@@ -29,6 +29,7 @@ from .engine.events import RunEnded
 from .engine.loop import Engine
 from .engine.state import new_run
 from .llm.client import OllamaClient
+from .memory import canonist
 from .memory.store import Store, WorldError, archive_world
 from .memory.writer import MemoryWriter
 from .narrate.narrator import Narrator
@@ -40,7 +41,8 @@ class Session:
     """A built, playable run: engine, memory observer, and the teardown they
     share. Frontends consume `engine`; they never assemble one."""
 
-    def __init__(self, settings, theme, store, state, engine, memory, client, prefetcher):
+    def __init__(self, settings, theme, store, state, engine, memory, client, prefetcher,
+                 *, canon: bool = True):
         self.settings = settings
         self.theme = theme
         self.store = store
@@ -49,6 +51,7 @@ class Session:
         self.memory = memory
         self.client = client
         self.prefetcher = prefetcher
+        self.canon = canon
         # A frontend sets these when it sees RunEnded. "abandoned" is the honest
         # default: a closed window is not a death.
         self.cause = "abandoned"
@@ -61,7 +64,20 @@ class Session:
         """Always runs. An orphaned open row confuses previous_runs()."""
         if self.prefetcher is not None:
             self.prefetcher.stop()
+
+        # Order matters twice over. After `memory.close()`, which drains and
+        # embeds this run's transcripts -- refreshing first writes canon from a
+        # world one run out of date. Before `end_run()`, so `source_run` names
+        # the run that produced it.
         self.memory.close()
+        if self.canon and self.client is not None:
+            grown = canonist.refresh(
+                self.store, self.theme, self.client, self.settings.director,
+                run_id=self.state.run_id,
+            )
+            if grown:
+                print(f"[canon: {len(grown)} new]", file=sys.stderr)
+
         self.store.end_run(
             self.state.run_id, cause=self.cause, depth=self.state.depth,
             turns=self.state.turns, epitaph=self.epitaph,
@@ -127,7 +143,8 @@ def build_session(args, settings: Settings, theme: Theme) -> Session:
     # Memory is an observer of the same event stream, not a dependency of the
     # turn loop. See memory/writer.py for why reads are not symmetric.
     memory = MemoryWriter(store, state, client=client, embed_policy=settings.embed)
-    return Session(settings, theme, store, state, engine, memory, client, prefetcher)
+    return Session(settings, theme, store, state, engine, memory, client, prefetcher,
+                   canon=not args.no_canon)
 
 
 def play_repl(session: Session) -> None:
@@ -176,9 +193,10 @@ def _forget(settings: Settings, theme: Theme, who: str) -> int:
     except WorldError as e:
         print(e, file=sys.stderr)
         return 1
-    removed = store.forget(match.anchor)
+    removed, retired = store.forget(match.anchor)
     store.close()
-    print(f"[{match.name} forgot {removed} memories]", file=sys.stderr)
+    print(f"[{match.name} forgot {removed} memories and {retired} canon; "
+          f"their authored persona is untouched]", file=sys.stderr)
     return 0
 
 
@@ -192,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, help="deterministic floor generation")
     ap.add_argument("--no-prefetch", action="store_true", help="disable generate-ahead")
     ap.add_argument("--offline", action="store_true", help="no model: procedural names only")
+    ap.add_argument("--no-canon", action="store_true",
+                    help="skip the derived-canon write-up on exit")
     ap.add_argument("--new-world", action="store_true",
                     help="archive the current world and start a fresh one")
     ap.add_argument("--forget", metavar="NPC",

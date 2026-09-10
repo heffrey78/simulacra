@@ -131,6 +131,76 @@ def load_floor_identity(store, floor: Floor) -> bool:
     return True
 
 
+def ensure_npcs(store, theme) -> None:
+    """Give every roster NPC a home in the graph, before anyone has met them.
+
+    Until M7 an NPC got a `nodes` row only once it had been spoken to, which
+    made it a thing that appeared when observed rather than a resident of the
+    world. Nothing can be given a gift, moved, or hold an opinion of the player
+    until it exists independently of being looked at.
+
+    Idempotent in two different ways, and the difference matters. The node's
+    `data` is written only on creation -- rewriting it would clobber an NPC that
+    has since moved. Authored canon is reconciled every time, because the theme
+    pack is its source of truth: adding a line to the roster should reach worlds
+    that already exist, without mutating the rows already there.
+    """
+    for npc in theme.npcs:
+        if store.node(npc.anchor) is None:
+            store.upsert_node(
+                npc.anchor, "npc", npc.name,
+                {
+                    "home_depth": npc.depth,
+                    "room_id": None,
+                    "disposition": 0,
+                    "inventory": [],
+                    "last_canon_run": None,
+                },
+            )
+        known = {r["text"] for r in store.canon(npc.anchor, provenance="authored")}
+        for text in npc.canon:
+            if text not in known:
+                store.add_canon(npc.anchor, text, "authored")
+    store.commit()
+
+
+def place_npcs(store, floor, theme) -> None:
+    """Put each resident NPC where the *world* says it is.
+
+    `floorgen` still decides a default home, because it must stay pure -- no
+    store, no I/O. This inverts the dependency one layer up: a stored `room_id`
+    wins, and an NPC that has never been placed has its generated room written
+    back. That is what makes NPC movement (M9) a state update rather than a
+    floorgen rewrite.
+    """
+    for npc in theme.npcs:
+        if npc.depth != floor.depth:
+            continue
+        node = store.node(npc.anchor)
+        if node is None:
+            continue
+
+        here = next(
+            (r for r in floor.rooms.values() if any(a.id == npc.anchor for a in r.actors)),
+            None,
+        )
+        if here is None:
+            continue
+
+        data = json.loads(node["data"] or "{}")
+        stored = data.get("room_id")
+
+        if stored and stored in floor.rooms:
+            if stored != here.id:
+                actor = next(a for a in here.actors if a.id == npc.anchor)
+                here.actors.remove(actor)
+                floor.rooms[stored].actors.append(actor)
+        else:
+            data["room_id"] = here.id
+            store.upsert_node(npc.anchor, "npc", npc.name, data)
+    store.commit()
+
+
 def new_run(store, theme, settings, seed: int | None = None) -> GameState:
     """Open a run against an existing world: allocate the run row, build floor 1.
 
@@ -145,8 +215,11 @@ def new_run(store, theme, settings, seed: int | None = None) -> GameState:
     world_seed = store.claim_world_seed(seed)
     run_seed = random.randrange(1 << 30) if seed is None else int(seed)
 
+    ensure_npcs(store, theme)
+
     run_id = store.start_run(theme.name, seed=run_seed)
     floor = generate_floor(1, theme, floor_rng(world_seed, 1))
+    place_npcs(store, floor, theme)
 
     return GameState(
         run_id=run_id,

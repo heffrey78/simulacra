@@ -39,7 +39,20 @@ from .events import (
 from .combat import actors_attack, clear_dead, player_attacks
 from .judge import adjudicate, apply_verdict
 from .parser import infer, parse
-from .state import load_floor_identity, persist_floor
+from .state import load_floor_identity, persist_floor, place_npcs
+
+# Read-side caps on canon. The write side caps too (an NPC accumulates canon
+# across a world's lifetime), but the prompt is the thing that actually breaks,
+# so it enforces its own ceiling rather than trusting every writer.
+CANON_LIMIT = 4
+TOLD_LIMIT = 2
+
+# How much hearsay one NPC retains, and how much weight it carries. The cap is
+# not optional: `told` is a channel the player writes into directly, so an
+# uncapped one is both a prompt-bloat vector and a grief vector. Code owns the
+# ceiling, as it owns every other budget in this game.
+TOLD_CAP = 3
+TOLD_CONFIDENCE = 0.5
 
 # Two or three recollections, never more. Prompt bloat is real at 4096 context,
 # and a small model handed six memories recites a list instead of speaking.
@@ -71,6 +84,35 @@ _KIND_BLURB = {
     RoomKind.SHRINE: "This room was made with more care than the rest.",
     RoomKind.DESCENT: "Stairs drop away into the dark.",
 }
+
+
+# Words that are never part of who is being addressed.
+_NAME_NOISE = frozenset({"the", "a", "an"}) | _ADDRESS_WORDS | _TOPIC_WORDS
+
+
+def _name_words(name: str) -> set[str]:
+    return {w for w in name.lower().split() if w not in _NAME_NOISE}
+
+
+def _addressed(target: str, npcs: list):
+    """Which NPC is being spoken to, or None when it is genuinely ambiguous.
+
+    Matches on *word overlap*, not the substring test this used to do. The old
+    `needle in a.name.lower()` compared the whole remaining input against the
+    name, so `ask archivist about the arm` matched nobody and fell through to
+    `npcs[0]` -- correct only while a room could hold at most one NPC, which
+    conversation-system.md flagged as fragile and C2 stopped being true.
+
+    Guessing wrong here anchors the wrong NPC's canon and recall, and the
+    failure is silent. So an ambiguous address asks.
+    """
+    words = set(target.lower().split())
+    hits = [a for a in npcs if _name_words(a.name) & words]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits and len(npcs) == 1:
+        return npcs[0]
+    return None
 
 
 def _topic_of(target: str, npc_name: str) -> str:
@@ -172,6 +214,8 @@ class Engine:
                 yield from self._improvise(intent.raw or text)
             case "talk":
                 yield from self._talk(intent.target)
+            case "tell":
+                yield from self._tell(intent.target)
             case _:
                 yield Notice("I don't understand.")
 
@@ -198,6 +242,7 @@ class Engine:
         )
 
         yield from self._establish(floor)
+        place_npcs(self.store, floor, self.theme)
 
         # Set the floor before entering: _enter_room reads state.floor.
         self.state.floor = floor
@@ -364,8 +409,11 @@ class Engine:
             yield Notice("They have nothing to say.")
             return
 
-        needle = target.lower()
-        actor = next((a for a in npcs if needle and needle in a.name.lower()), npcs[0])
+        actor = _addressed(target, npcs)
+        if actor is None:
+            yield Notice("Which of them? " + ", ".join(a.name for a in npcs) + ".")
+            return
+
         persona = self._personas().get(actor.id)
         if persona is None:
             yield Notice("They have nothing to say.")
@@ -373,6 +421,8 @@ class Engine:
 
         recollections = self._recall_for(actor.id, _topic_of(target, actor.name))
         actor.recollections = [r.text for r in recollections]
+        canon = self._canon_for(actor.id)
+        told = self._told_to(actor.id)
 
         # Talking is a resolved action, so anything hostile in the room gets its
         # turn. Conversation in a monster's presence is a choice with a price.
@@ -382,7 +432,7 @@ class Engine:
                          remembers=bool(recollections))
         yield ProseStart(channel="npc", speaker=actor.name)
         spoken: list[str] = []
-        for piece in self.narrator.npc(persona, target, recollections):
+        for piece in self.narrator.npc(persona, target, recollections, canon, told):
             spoken.append(piece)
             yield ProseDelta(piece)
         yield ProseEnd()
@@ -402,6 +452,66 @@ class Engine:
             subjects=(actor.id, f"room:{self.state.room_id}"),
             tags=("dialogue",),
         )
+
+    def _canon_for(self, anchor: str) -> list[str]:
+        """What this NPC *is*: the `self` route's resolver, arriving early.
+
+        Needs no classification to be useful, which is why it lands in M7 while
+        the rest of the routes wait for M8. Authored and derived only -- `told`
+        is fetched separately because the prompt has to label it as hearsay.
+        """
+        try:
+            rows = self.store.canon(
+                anchor, provenance=("authored", "derived"), limit=CANON_LIMIT
+            )
+        except Exception:
+            return []
+        return [r["text"] for r in rows]
+
+    def _told_to(self, anchor: str) -> list[str]:
+        try:
+            rows = self.store.canon(anchor, provenance="told", limit=TOLD_LIMIT)
+        except Exception:
+            return []
+        return [r["text"] for r in rows]
+
+    def _tell(self, target: str) -> Iterator[Event]:
+        """The player asserts something. It becomes hearsay, and may be false.
+
+        This is the narrow, safe half of "NPCs learn from what players say" --
+        the half M4's bug made everyone afraid of. It is safe because it is
+        *typed*: the row is `provenance='told'`, it is never promoted to
+        `derived` or `observed` by any code path, and the prompt labels it as
+        something a delver claimed rather than something the NPC knows. A lying
+        player produces an NPC that believes something false, which is content.
+        """
+        npcs = [a for a in self.state.room.actors if not a.hostile]
+        if not npcs:
+            yield Notice("There is no one here to tell.")
+            return
+
+        actor = _addressed(target, npcs)
+        if actor is None:
+            yield Notice("Tell which of them? " + ", ".join(a.name for a in npcs) + ".")
+            return
+
+        claim = _topic_of(target, actor.name).strip()
+        if not claim:
+            yield Notice(f"Tell {actor.name} what?")
+            return
+
+        try:
+            self.store.add_canon(
+                actor.id, claim, "told",
+                source_run=self.state.run_id, confidence=TOLD_CONFIDENCE,
+            )
+            self.store.retire_canon(actor.id, provenance="told", keep_newest=TOLD_CAP)
+        except Exception:
+            # A world that cannot record the claim can still hear it.
+            pass
+
+        # Then they answer, with the claim already in their prompt.
+        yield from self._talk(target)
 
     def _personas(self) -> dict:
         return {n.anchor: n for n in self.theme.npcs}

@@ -41,7 +41,16 @@ GUARD_PREFIX_CHARS = 48
 
 # Labels that only ever appear in the prompt. Any of them in the output means
 # the model is transcribing rather than writing.
-_CENSUS_LABELS = ("room:", "role:", "exits:", "contains:", "present:", "concept:")
+_CENSUS_LABELS = (
+    "room:", "role:", "exits:", "contains:", "present:", "concept:",
+    # Dialogue's own labels. These only ever appear in the prompt, so seeing one
+    # in the output means the model is transcribing rather than speaking.
+    # Measured live: an NPC replied "The delver said: archivist vault on floor
+    # two is already open." -- an echo the census labels alone did not catch,
+    # because "said" is not "says" and the prefix check needs a verbatim match.
+    "the delver says", "the delver said", "what is true of you",
+    "you remember, from earlier", "a delver once told you",
+)
 
 _WS = re.compile(r"\s+")
 
@@ -312,7 +321,8 @@ class Narrator:
             else:
                 yield f"Nothing more to notice about {name}."
 
-    def npc(self, npc, player_line: str, recollections: list) -> Iterator[str]:
+    def npc(self, npc, player_line: str, recollections: list,
+            canon: list | None = None, told: list | None = None) -> Iterator[str]:
         """Stream NPC speech, conditioned on what this NPC actually remembers.
 
         `recollections` come from Store.recall(about=npc.anchor, ...) -- prior
@@ -332,7 +342,24 @@ class Narrator:
         if note := self._theme.style_note(motifs=False):
             system += " " + note
 
+        # Order is load-bearing, and follows what M4 measured: a small model
+        # attends hardest to the end of its prompt. So standing context first --
+        # what this NPC *is*, then what it was told -- and episodic recall last,
+        # where `_recall_for` has already sorted the death to the very end.
+        #
+        # Canon and recollections are separate labelled sections on purpose. The
+        # model has to be able to tell "what I am" from "what I saw happen to
+        # someone else"; merging them is how M4's prompt ended up instructing an
+        # NPC to recite a death regardless of what it was asked.
         parts = []
+        if canon:
+            parts.append("What is true of you:")
+            parts.extend(f"- {c}" for c in canon)
+        if told:
+            parts.append("A delver once told you, and may have been lying:")
+            parts.extend(f"- {t}" for t in told)
+            parts.append("If you repeat any of that, say who told you.")
+
         if recollections:
             parts.append("You remember, from earlier delvers:")
             parts.extend(f"- {r.text}" for r in recollections)
@@ -343,8 +370,18 @@ class Narrator:
                 "Say out loud what happened to the delver you remember, including "
                 "the floor and what killed them. Do not invent any other history."
             )
+        elif canon:
+            # There must always be an instruction. Dropping this branch left a
+            # prompt that was nothing but data and the player's line, and a 1.7b
+            # handed no instruction transcribes the last thing it was given --
+            # measured live as "They say nothing." once the guard caught it.
+            parts.append("Answer them from what is true of you. Do not invent history.")
         else:
+            # Only when the NPC has nothing at all. An NPC with canon can speak
+            # from what it is, and telling it that it remembers nothing is how
+            # you get a character who refuses to say anything about itself.
             parts.append("You remember nothing about this delver. Do not pretend to.")
+
         parts.append(f"The delver says: {player_line or 'nothing; they simply approach.'}")
         user = "\n".join(parts)
 

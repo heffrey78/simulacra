@@ -169,10 +169,8 @@ def _populate(rooms: dict[str, Room], depth: int, theme: Theme, rng: random.Rand
             room.items.append(_item(theme, "healing", depth, rng))
 
 
-# Persistent NPCs live shallow on purpose. The M3 depth distribution puts the
-# median run's end at floor 4, so an NPC placed deeper is one most runs never
-# meet -- and an NPC nobody meets accumulates no memory.
-NPC_DEPTH = 1
+# Which floor an NPC lives on is the theme pack's call now (`Npc.depth`), not a
+# constant here -- the reasoning that used to live at this line moved with it.
 
 
 def _place_npcs(rooms: dict[str, Room], entrance_id: str, depth: int, theme: Theme) -> None:
@@ -181,7 +179,8 @@ def _place_npcs(rooms: dict[str, Room], entrance_id: str, depth: int, theme: The
     The actor id **is** the theme's graph anchor. A generated id per run would
     silently create a new NPC every time, and nothing would ever be remembered.
     """
-    if depth != NPC_DEPTH or not theme.npcs:
+    resident = [n for n in theme.npcs if n.depth == depth]
+    if not resident:
         return
 
     host = next((r for r in rooms.values() if r.kind is RoomKind.SHRINE), None)
@@ -190,7 +189,7 @@ def _place_npcs(rooms: dict[str, Room], entrance_id: str, depth: int, theme: The
 
     # Somewhere to talk, not to fight.
     host.actors = [a for a in host.actors if not a.hostile]
-    for npc in theme.npcs:
+    for npc in resident:
         host.actors.append(Actor(
             id=npc.anchor, name=npc.name, hp=1, max_hp=1,
             attack=0, defense=99, hostile=False, archetype="npc",

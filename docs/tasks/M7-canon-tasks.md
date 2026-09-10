@@ -1,4 +1,7 @@
-# M7 — Canon
+# M7 — Canon · ✅ COMPLETE
+
+> **Status: done.** 564 tests green with the daemon unreachable. Findings —
+> including one the automated tests could not have caught — at the bottom.
 
 > Scoped from [systems.md §5](../plan/systems.md#5-s1--canon). **Depends on M6**
 > — canon hangs off node ids, and node ids do not have a stable referent until
@@ -408,3 +411,145 @@ client. Play it, close it, and time the close.
 that has held since M4 by accident rather than by design. The disambiguation path
 is new code on a verb that already has a documented resolution weakness; give it
 its own test rather than assuming the C3 change covered it.
+
+---
+
+## Findings
+
+### The canonist had no output guard, and canon is forever
+
+The narrator has had `looks_degenerate` since M4, but it guards *streamed
+prose*. The canonist wrote structured output straight into a table that outlives
+the run, with nothing checking it. The first live five-run read produced:
+
+> The Archivist's ledger is currently marked with 123456789.
+
+That is the same collapse M4 caught in the narrator — and it had become
+permanent canon, in every conversation that NPC would ever have again. A bad
+line of narration scrolls away; a bad line of canon does not.
+
+`_plausible()` now rejects a fact before it is written: `looks_degenerate`, a
+run of four or more digits (so "floor 3" and "209 delvers" survive), and a word
+count outside 4–24. **No unit test would have found this.** It took C8's
+five-run read, which is exactly what that check exists for.
+
+### Input selection mattered far more than prompt wording
+
+The first five-run read produced canon that was all about one noun and
+contradicted itself between runs — "the ledger is unverified and incomplete",
+then "the ledger remains intact". The cause was the input, not the prompt: the
+only episodic memories in a world where nobody had died were dialogue
+transcripts, which record the *shape* of a question ("a delver asked about the
+arm") and not its answer. True, and nearly information-free.
+
+`Store.memories_about(prefer=INFORMATIVE)` puts deaths and discoveries ahead of
+chatter. Re-measured against a world where each run ends in a death, the same
+model produced canon that accumulates instead of circling:
+
+> run 3 — The Archivist's ledger contains entries for three delvers who died on floor 1.
+> run 5 — The Archivist's ledger contains entries for six delvers killed on floor 1.
+
+It started *counting*, which is the Archivist's authored role. That is the
+milestone's gate met — a backstory that is not a death, grown from deaths.
+
+This confirms C8's own instruction ("the lever if it drifts is narrowing the
+refresh's input selection") and is worth carrying into M8: the routes are an
+input-selection system, and this is evidence that input selection is where the
+quality is.
+
+### `memories_about` bound its parameters in the wrong order
+
+SQLite binds positionally by *statement text*, and the `WHERE` placeholder is
+written before the `ORDER BY` ones. Passing `(*prefer, node_id, limit)` silently
+ranked nothing and filtered by the wrong value. Caught by
+`test_content_bearing_memories_outrank_chatter`, which was written to assert the
+death reaches the prompt rather than that the function returns rows.
+
+### The refresh is far cheaper than budgeted
+
+Planned as a ~25–30 s tier-3 call. Measured at **2.3–6.7 s**, because the prompt
+is small and the response is at most three short sentences. Exit cost is
+negligible, and the daemon-thread timeout has never fired in practice — it stays
+as insurance, not as a routine path.
+
+| | measured |
+|---|---|
+| canon refresh, per exit | 2.3–6.7 s, one NPC |
+| exits that skipped it (nothing new) | 1 of 5 |
+| tier-3 calls per run after floor 1 is known | 1 (the canonist; M6 removed the director) |
+
+### Two failures that only a live conversation could produce
+
+Both appeared on the first real playthrough, with 564 tests green.
+
+**C6 removed the only instruction from a branch.** Skipping the "you remember
+nothing" line whenever canon exists — which the plan asked for, and which is
+right — left the no-recollections case as a prompt made of nothing but data and
+the player's line. A 1.7b handed no instruction transcribes the last thing it
+was given. Observed as `They say nothing.` once the echo guard caught it. Every
+branch now ends with an instruction; the canon branch gets "Answer them from
+what is true of you. Do not invent history."
+
+**The echo guard did not know dialogue's labels.** `_CENSUS_LABELS` covers
+`ROOM:`, `EXITS:` and friends, which are room-prose labels. The dialogue prompt
+has labels of its own, and one reached the screen verbatim:
+
+> The delver said: archivist vault on floor two is already open.
+
+The prefix check missed it because the prompt says "says" and the model wrote
+"said". The dialogue labels are now in the list. Worth noting the shape of this:
+M4 built the guard for room prose, M7 added a second caller, and the guard's
+vocabulary silently did not follow. Any future prompt with labels of its own
+needs the same audit.
+
+### The gate, live
+
+After both fixes, on a world with two authored facts and one thing the player
+had told it:
+
+```
+> talk to archivist
+  The ledger is maintained by me. I do not go below the third floor.
+  The vault on floor two is already open.
+
+> ask archivist about the ledger
+  The ledger has been kept since before the current numbering began.
+  I do not go below the third floor, and I do not explain why.
+```
+
+An NPC saying something true about itself that was never a `Transcript`. That is
+the milestone.
+
+### Known limitations, recorded rather than fixed
+
+**Superseded facts are not detected.** A world holds both "three delvers who
+died on floor 1" and, two runs later, "six delvers killed on floor 1". Both are
+active canon. `DERIVED_CAP` ages the older one out within a few runs, which is a
+mitigation rather than a fix — nothing notices that the second contradicts the
+first. Contradiction detection is a real feature and deserves its own pass, not
+a bolt-on here.
+
+**Occasional factual drift.** Run 5 produced "The Archivist remains on floor 3",
+which the world does not support. Rare, bounded by the cap, and cheaper to live
+with than to prompt against on a 1.7b.
+
+**Hearsay is repeated without attribution.** The prompt carries "If you repeat
+any of that, say who told you", and the model mostly does not — it states the
+claim flat, as though it were its own. The typing is doing its job in the
+database; the *framing* is not reaching the player. This is the lever C8 named
+(prompt framing, not deleting the provenance) and it is the natural thing for
+M8 to fix, since a `told` route can say so in the resolver rather than hoping
+the model obeys a rider.
+
+### Deviations from the plan
+
+**`--no-canon` and a hard timeout.** The plan asked that the refresh never hang
+the exit; it runs on a daemon thread joined with a timeout, so a model that
+stops responding costs a bounded wait rather than the client's full 120 s
+request timeout. Abandoning it loses one run's increment and nothing else — the
+gate is a memory *count*, not a flag, so the next exit sees the same gap.
+
+**The gate is a count, not `last_canon_run`.** The plan named the field; a count
+answers the question actually being asked (has anything new happened to say?)
+and makes an abandoned refresh free. `last_canon_run` is still written, as a
+record rather than as the gate.

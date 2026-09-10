@@ -21,6 +21,21 @@ class Npc:
     role: str
     voice: str
 
+    # Which floor this one lives on. Content, not structure -- which is why it
+    # sits here next to their voice rather than as a constant in floorgen.
+    #
+    # Default 1 on purpose: the M3 depth distribution puts the median run's end
+    # at floor 4, so an NPC placed deeper is one most runs never meet, and an
+    # NPC nobody meets accumulates no canon. Persistent floors (M6) widen that a
+    # little -- a world you can re-walk for free makes floor 3 reachable in a
+    # way it was not -- but not without limit.
+    depth: int = 1
+
+    # Seed canon: `provenance='authored'`. The one class of canon that is never
+    # generated and never mutated, and the only input (with episodic memory)
+    # that derived canon is allowed to be built from.
+    canon: tuple[str, ...] = ()
+
 
 @dataclass
 class Theme:
@@ -79,5 +94,12 @@ class Theme:
             rooms=d.get("rooms", {}),
             monsters=d.get("monsters", {}),
             items=d.get("items", {}),
-            npcs=[Npc(**n) for n in d.get("npcs", {}).get("roster", [])],
+            npcs=[
+                Npc(
+                    anchor=n["anchor"], name=n["name"], role=n["role"], voice=n["voice"],
+                    depth=int(n.get("depth", 1)),
+                    canon=tuple(n.get("canon", ())),
+                )
+                for n in d.get("npcs", {}).get("roster", [])
+            ],
         )

@@ -60,8 +60,30 @@ key     = [["a key with no teeth"], ["a seal, half-pressed"]]
 
 [npcs]
 # NPCs persist across runs and accumulate memory. `anchor` is the graph node id.
+#
+# `depth` is the floor they live on. `canon` is authored backstory -- stable
+# facts the NPC can state about itself, never generated and never rewritten.
+# Keep each one to a single short sentence: they are prompt tokens on every
+# conversation, and they are also the only thing derived canon is grown from.
 [[npcs.roster]]
 anchor = "npc:archivist"
 name = "the Archivist"
 role = "keeps count of everyone who has gone down"
 voice = "Terse and clerical, like reading from a ledger. Refers to delvers by number, never by name."
+depth = 1
+canon = [
+  "Has kept the ledger since before the current numbering began.",
+  "Will not go below the third floor, and will not say why.",
+]
+
+[[npcs.roster]]
+anchor = "npc:corrector"
+name = "the Corrector"
+role = "mends the places where the copy has worn through"
+voice = "Patient and apologetic. Corrects itself mid-sentence, and never quite finishes a thought."
+depth = 3
+canon = [
+  "Has been repairing the same corridor for longer than it can account for.",
+  "Believes the original is still down there somewhere, unworn.",
+  "Does not trust the Archivist's count.",
+]

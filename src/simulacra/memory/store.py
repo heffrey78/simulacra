@@ -34,8 +34,24 @@ EMBED_DIM = 768  # nomic-embed-text
 # Bumped whenever a schema change makes an older build unable to read this file
 # correctly. A world someone has played twenty runs into must be able to *say*
 # it was written by a different build; a stack trace against a changed table is
-# the failure mode this exists to prevent. M7 adds the first forward migration.
-SCHEMA_VERSION = 1
+# the failure mode this exists to prevent.
+#
+#   1 -- M6, the persistent world
+#   2 -- M7, canon
+SCHEMA_VERSION = 2
+
+# The closed set of things canon can *be*, and the reason the M4 self-quotation
+# loop cannot come back.
+#
+#   authored -- from the theme pack. The seed persona; never mutated.
+#   derived  -- generated at tier 3 from `authored` + episodic memory.
+#   told     -- the player asserted it. Hearsay, and possibly false.
+#
+# `observed` is not here: episodic memory lives in `memories`. Neither is
+# `generated`: streamed prose and NPC replies are never persisted as knowledge
+# at all, which is what stops a model reading back its own words as fact. The
+# natural mistake is to add both for symmetry -- do not.
+PROVENANCE = frozenset({"authored", "derived", "told"})
 
 
 # `edges` is WITHOUT ROWID, which makes every primary-key column implicitly
@@ -156,6 +172,26 @@ CREATE TABLE IF NOT EXISTS memory_subjects (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_ms_node ON memory_subjects(node_id);
 
+-- Stable knowledge about a node, as opposed to episodic memory of events.
+--
+-- "The Archivist's brother went into the lower stacks" is not something that
+-- happened during a run; it is a property of the Archivist. Different
+-- lifecycle, different write path, different retrieval -- so a different table.
+--
+-- Amended by retirement rather than deletion: in a world that persists across
+-- dozens of runs, what an NPC used to believe is worth more than the row.
+CREATE TABLE IF NOT EXISTS canon (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id     TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    provenance  TEXT NOT NULL,
+    source_run  INTEGER,
+    confidence  REAL NOT NULL DEFAULT 1.0,
+    status      TEXT NOT NULL DEFAULT 'active',
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_canon_node ON canon(node_id, status);
+
 -- Generated prose, cached. Regenerating a described room is pure waste at
 -- 15 tok/s, and cache hits are what make backtracking feel instant.
 CREATE TABLE IF NOT EXISTS prose_cache (
@@ -275,17 +311,46 @@ class Store:
                 self.db.commit()
                 return
 
-            if row["schema_version"] != SCHEMA_VERSION:
-                raise WorldVersionError(
-                    f"{self.path} is schema version {row['schema_version']}; this build "
-                    f"speaks {SCHEMA_VERSION}. Archive it with: simulacra --new-world"
-                )
+            stored = int(row["schema_version"])
+            if stored != SCHEMA_VERSION:
+                self._migrate(stored)
 
             # A world created by a bare Store() has no theme yet. Claiming it on
             # the first real open beats a second table or a nullable column.
             if theme and not row["theme"]:
                 self.db.execute("UPDATE world SET theme = ? WHERE id = 1", (theme,))
                 self.db.commit()
+
+    def _migrate(self, stored: int) -> None:
+        """Walk a world forward one version at a time, or refuse.
+
+        Additive changes are free: `executescript(SCHEMA)` has already run by
+        the time we get here, and every statement in it is `IF NOT EXISTS`, so a
+        new table exists before its migration is asked for. A step only needs a
+        body when it *transforms* or drops something. `1 -> 2` (M7 canon) is the
+        additive case, which is why it is `None`.
+
+        A world from a *newer* build has no path -- do not open it read-only and
+        pretend.
+        """
+        if stored > SCHEMA_VERSION:
+            raise WorldVersionError(
+                f"{self.path} is schema version {stored}; this build speaks "
+                f"{SCHEMA_VERSION}. Update simulacra, or start over with: "
+                f"simulacra --new-world"
+            )
+
+        for step in range(stored, SCHEMA_VERSION):
+            if step not in MIGRATIONS:
+                raise WorldVersionError(
+                    f"{self.path} is schema version {stored} and there is no way "
+                    f"forward from {step}. Archive it with: simulacra --new-world"
+                )
+            if (fn := MIGRATIONS[step]) is not None:
+                fn(self)
+
+        self.db.execute("UPDATE world SET schema_version = ? WHERE id = 1", (SCHEMA_VERSION,))
+        self.db.commit()
 
     def world(self) -> sqlite3.Row:
         with self._lock:
@@ -455,6 +520,45 @@ class Store:
             self.db.commit()
             return mem_id
 
+    def memories_about(
+        self, node_id: str, *, prefer: Sequence[str] = (), limit: int = 6
+    ) -> list[sqlite3.Row]:
+        """Episodic memories concerning a node, most informative first.
+
+        `prefer` names kinds to put at the front. The canonist needs it because
+        dialogue transcripts record only the *shape* of a question ("a delver
+        asked about the arm") -- true, and almost information-free. A death says
+        what actually happened. Filling a write-up prompt with the former is how
+        you get canon that says the same thing five runs running.
+        """
+        order = "".join(
+            f" WHEN ? THEN {i}" for i in range(len(prefer))
+        )
+        rank = f"CASE m.kind{order} ELSE {len(prefer)} END" if prefer else "0"
+        with self._lock:
+            return self.db.execute(
+                f"""SELECT m.* FROM memories m
+                    JOIN memory_subjects s ON s.memory_id = m.id
+                    WHERE s.node_id = ?
+                    ORDER BY {rank}, m.id DESC LIMIT ?""",
+                # Positional binding follows the *statement text*: the WHERE
+                # placeholder is written before the ORDER BY ones.
+                (node_id, *prefer, limit),
+            ).fetchall()
+
+    def memory_count(self, node_id: str) -> int:
+        """How many episodic memories concern this node.
+
+        The canonist's gate. A count rather than a timestamp because it answers
+        the question actually being asked -- has there been anything new to say
+        since the last write-up -- and because an abandoned refresh then loses
+        nothing: the next exit sees the same gap.
+        """
+        with self._lock:
+            return int(self.db.execute(
+                "SELECT COUNT(*) AS n FROM memory_subjects WHERE node_id = ?", (node_id,)
+            ).fetchone()["n"])
+
     def attach_embedding(self, memory_id: int, embedding: Sequence[float]) -> None:
         """Add a vector to a memory written earlier.
 
@@ -540,7 +644,7 @@ class Store:
                 for r in rows
             ]
 
-    def forget(self, node_id: str) -> int:
+    def forget(self, node_id: str) -> tuple[int, int]:
         """Erase what the world remembers *about* one node, keeping the node.
 
         The escape hatch a persistent world needs: a generated persona that goes
@@ -550,8 +654,23 @@ class Store:
         Subject links go first and memories only follow when nothing else claims
         them -- a death is subject to both the NPC who witnessed it and the room
         it happened in, and forgetting the NPC must not quietly erase the room's
-        history too. Returns the number of memories actually removed.
+        history too.
+
+        **Authored canon survives.** The NPC comes back as itself rather than as
+        nothing -- the theme pack's seed persona is not the thing that went
+        wrong. `derived` and `told` are retired, and the canonist's gate is reset
+        so a later run writes canon up again from scratch.
+
+        Returns (memories removed, canon retired).
         """
+        retired = self.retire_canon(node_id, provenance=("derived", "told"))
+        if (node := self.node(node_id)) is not None:
+            data = json.loads(node["data"] or "{}")
+            data["canon_memories"] = 0
+            data["last_canon_run"] = None
+            self.upsert_node(node_id, node["kind"], node["name"], data)
+            self.commit()
+
         with self._lock:
             self.db.execute("DELETE FROM memory_subjects WHERE node_id = ?", (node_id,))
             orphans = [
@@ -564,7 +683,92 @@ class Store:
                 self.db.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (mid,))
                 self.db.execute("DELETE FROM memories WHERE id = ?", (mid,))
             self.db.commit()
-            return len(orphans)
+            return len(orphans), retired
+
+    # -- canon -------------------------------------------------------------
+
+    def add_canon(
+        self,
+        node_id: str,
+        text: str,
+        provenance: str,
+        *,
+        source_run: int | None = None,
+        confidence: float = 1.0,
+    ) -> int:
+        """Write one stable fact about a node.
+
+        `provenance` is validated rather than trusted. The whole design rests on
+        this column meaning what it says: a value that slips through misspelled
+        is recall-eligible *and* invisible to `retire_canon`, so it can never be
+        taken back. See `PROVENANCE` for why `observed` and `generated` are not
+        members.
+        """
+        if provenance not in PROVENANCE:
+            raise ValueError(
+                f"provenance {provenance!r} is not one of {sorted(PROVENANCE)}; "
+                f"episodic memory goes in `memories`, and generated prose is "
+                f"never persisted as knowledge"
+            )
+        with self._lock:
+            cur = self.db.execute(
+                """INSERT INTO canon (node_id, text, provenance, source_run, confidence, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (node_id, text, provenance, source_run, float(confidence), time.time()),
+            )
+            self.db.commit()
+            return int(cur.lastrowid)
+
+    def canon(
+        self, node_id: str, *, provenance: str | Iterable[str] | None = None, limit: int | None = None
+    ) -> list[sqlite3.Row]:
+        """Active canon for a node, in the order it belongs in a prompt.
+
+        `authored` first, then `derived`, then `told`. That ordering is
+        load-bearing rather than cosmetic: what an NPC *is* has to precede what
+        it has worked out, which has to precede what somebody claimed at it.
+        """
+        kinds = (
+            list(PROVENANCE) if provenance is None
+            else [provenance] if isinstance(provenance, str)
+            else list(provenance)
+        )
+        placeholders = ",".join("?" * len(kinds))
+        q = f"""SELECT * FROM canon
+                WHERE node_id = ? AND status = 'active' AND provenance IN ({placeholders})
+                ORDER BY CASE provenance
+                             WHEN 'authored' THEN 0 WHEN 'derived' THEN 1 ELSE 2
+                         END, id"""
+        args: list[Any] = [node_id, *kinds]
+        if limit is not None:
+            q += " LIMIT ?"
+            args.append(limit)
+        with self._lock:
+            return self.db.execute(q, args).fetchall()
+
+    def retire_canon(
+        self, node_id: str, *, provenance: str | Iterable[str] | None = None,
+        keep_newest: int | None = None,
+    ) -> int:
+        """Supersede canon without losing it. Returns how many rows were retired.
+
+        `keep_newest` retires only what is left once the newest N are kept --
+        the cap that stops canon growing without bound, applied per provenance
+        by the caller. Canon that only ever accumulates becomes a prompt-bloat
+        problem some number of runs out, and a cap is cheaper than the
+        compaction pass it would otherwise need.
+        """
+        rows = self.canon(node_id, provenance=provenance)
+        doomed = rows if keep_newest is None else rows[: max(0, len(rows) - keep_newest)]
+        if not doomed:
+            return 0
+        with self._lock:
+            self.db.executemany(
+                "UPDATE canon SET status = 'retired' WHERE id = ?",
+                [(r["id"],) for r in doomed],
+            )
+            self.db.commit()
+        return len(doomed)
 
     # -- prose cache -------------------------------------------------------
 
@@ -584,3 +788,10 @@ class Store:
     def commit(self) -> None:
         with self._lock:
             self.db.commit()
+
+
+# version -> what to do to get to the next one. `None` means the change was
+# purely additive and `SCHEMA`'s `IF NOT EXISTS` statements already did it.
+MIGRATIONS: dict[int, Any] = {
+    1: None,  # M7: added the `canon` table
+}

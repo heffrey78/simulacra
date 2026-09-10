@@ -17,8 +17,9 @@ from simulacra.engine.loop import Engine
 from simulacra.engine.state import new_run
 from simulacra.memory.store import Store
 from simulacra.narrate.narrator import Narrator
-from simulacra.world.floorgen import NPC_DEPTH, generate_floor
+from simulacra.world.floorgen import generate_floor
 from simulacra.world.model import Player
+from simulacra.world.theme import Theme
 
 from conftest import FakeClient
 
@@ -29,35 +30,57 @@ def npcs_on(floor):
     return [a for r in floor.rooms.values() for a in r.actors if not a.hostile]
 
 
+def resident(theme, depth):
+    """Roster entries that live on this floor. Since M7 `depth` is per-NPC, so
+    "the NPC floor" is no longer one floor."""
+    return [n for n in theme.npcs if n.depth == depth]
+
+
+def home_depth(theme):
+    return theme.npcs[0].depth
+
+
 # -- placement -------------------------------------------------------------
 
 
-def test_the_roster_is_placed_on_the_npc_floor(theme):
-    found = npcs_on(generate_floor(NPC_DEPTH, theme, random.Random(1)))
-    assert {a.id for a in found} == {n.anchor for n in theme.npcs}
+@pytest.mark.parametrize("depth", sorted({n.depth for n in Theme.load("simulacra").npcs}))
+def test_each_npc_is_placed_on_its_own_floor(theme, depth):
+    found = npcs_on(generate_floor(depth, theme, random.Random(1)))
+    assert {a.id for a in found} == {n.anchor for n in resident(theme, depth)}
+
+
+def test_the_roster_does_not_all_live_on_one_floor(theme):
+    """C2 added a second NPC at a different depth specifically so that canon
+    anchoring is falsifiable -- with one NPC every anchor test passes whether
+    the anchoring works or not."""
+    assert len({n.depth for n in theme.npcs}) > 1
 
 
 def test_the_actor_id_is_the_theme_anchor(theme):
     """A generated id per run would make a new NPC every time and nothing would
     ever be remembered."""
-    a = npcs_on(generate_floor(NPC_DEPTH, theme, random.Random(1)))[0]
+    a = npcs_on(generate_floor(home_depth(theme), theme, random.Random(1)))[0]
     assert a.id.startswith("npc:")
     assert a.id in {n.anchor for n in theme.npcs}
 
 
 @pytest.mark.parametrize("seed", range(8))
 def test_placement_is_stable_across_seeds(theme, seed):
-    assert len(npcs_on(generate_floor(NPC_DEPTH, theme, random.Random(seed)))) == len(theme.npcs)
+    depth = home_depth(theme)
+    assert len(npcs_on(generate_floor(depth, theme, random.Random(seed)))) == len(
+        resident(theme, depth)
+    )
 
 
-@pytest.mark.parametrize("depth", [2, 3, 5, 9])
-def test_npcs_do_not_appear_on_deeper_floors(theme, depth):
+@pytest.mark.parametrize("depth", [2, 4, 5, 9])
+def test_no_npc_appears_on_a_floor_that_is_not_theirs(theme, depth):
+    assert [n for n in theme.npcs if n.depth == depth] == [], "pick an unoccupied depth"
     assert npcs_on(generate_floor(depth, theme, random.Random(1))) == []
 
 
 def test_nothing_hostile_shares_the_npc_room(theme):
     for seed in range(20):
-        floor = generate_floor(NPC_DEPTH, theme, random.Random(seed))
+        floor = generate_floor(home_depth(theme), theme, random.Random(seed))
         host = next(r for r in floor.rooms.values()
                     if any(not a.hostile for a in r.actors))
         assert not any(a.hostile for a in host.actors), f"seed {seed}: a monster shares the room"
@@ -67,7 +90,7 @@ def test_nothing_hostile_shares_the_npc_room(theme):
 
 
 def test_npcs_never_attack_the_player(theme):
-    npc = npcs_on(generate_floor(NPC_DEPTH, theme, random.Random(1)))[0]
+    npc = npcs_on(generate_floor(home_depth(theme), theme, random.Random(1)))[0]
     player = Player()
     assert actors_attack([npc], player, random.Random(0)) == []
     assert player.hp == player.max_hp

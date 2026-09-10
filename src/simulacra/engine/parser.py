@@ -18,7 +18,7 @@ from typing import Literal
 from ..world.model import Direction
 
 Verb = Literal["move", "look", "take", "use", "inventory", "attack", "talk",
-               "descend", "wait", "quit"]
+               "tell", "descend", "wait", "quit"]
 
 # Intent schema for the stage-2 fallback. Deliberately tiny -- every optional
 # field is tokens the model spends and we wait for.
@@ -57,6 +57,10 @@ VERB_ALIASES: dict[str, Verb] = {
     "stab": "attack", "slash": "attack", "swing": "attack", "smack": "attack",
     "karate chop": "attack", "drop kick": "attack",
     "talk to": "talk", "talk": "talk", "speak": "talk", "ask": "talk",
+    # `tell` is an assertion, not a question -- the one place the player puts a
+    # claim *into* the world. Kept a deterministic verb rather than a tier-1
+    # "was that a statement?" classifier, which is M8's route work.
+    "tell": "tell", "say to": "tell", "inform": "tell",
     "descend": "descend", "stairs": "descend",
     "wait": "wait", "z": "wait",
     "quit": "quit", "exit": "quit", "q": "quit",
