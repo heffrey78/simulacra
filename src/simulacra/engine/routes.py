@@ -32,8 +32,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from .dealings import holdings, is_warm, is_wary
+
 # Order is the order they are tried in; `unknown` is the honest fallback.
-ROUTES = ("self", "room", "monsters", "npc", "item", "past", "unknown")
+ROUTES = ("self", "room", "monsters", "npc", "item", "trade", "past", "unknown")
 
 # What an NPC reaches for when the player gives it nothing to go on. Phrased
 # about outcomes, not conversations: "who spoke with X" ranked the NPC's own
@@ -62,7 +64,9 @@ _KEYWORDS: dict[str, set[str]] = {
     "monsters": {"monster", "monsters", "thing", "things", "creature", "danger",
                  "dangerous", "safe", "hostile", "ahead", "nearby", "close"},
     "item": {"item", "items", "key", "blade", "knife", "water", "ration", "jar",
-             "seal", "carry", "carrying", "inventory", "weapon"},
+             "seal", "inventory", "weapon"},
+    "trade": {"trade", "carry", "carrying", "hold", "holding", "spare", "sell",
+              "barter", "have"},
     "self": {"you", "your", "yours", "yourself", "name", "who"},
     "past": {"delver", "delvers", "died", "die", "death", "dead", "killed",
              "before", "last", "happened", "others", "previous"},
@@ -95,6 +99,7 @@ _LABELS = {
     "room": "About this place:",
     "monsters": "What is nearby:",
     "npc": "Others you know of:",
+    "trade": "What you are carrying:",
     "item": "What is here to be carried:",
     "past": "You remember, from earlier delvers:",
 }
@@ -196,7 +201,9 @@ class Router:
         words = set(topic.split())
         if actor is not None and self._self_words(actor) & words:
             return "self", False
-        for route in ("self", "npc", "monsters", "item", "room", "past"):
+        # `trade` before `self`: "what are you carrying" and "who are you" both
+        # contain "you", and only one of them is a question about identity.
+        for route in ("trade", "self", "npc", "monsters", "item", "room", "past"):
             if self._keywords.get(route, set()) & words:
                 return route, False
 
@@ -239,10 +246,33 @@ class Router:
     # is what keeps it true.
 
     def _self(self, state, actor, topic) -> list[Fact]:
-        rows = self._store.canon(
-            actor.id, provenance=("authored", "derived"), limit=CANON_LIMIT
-        )
+        """What this NPC is -- and how much of it they will tell *you*.
+
+        A gift buys access to a route, not an item. Authored canon is the
+        official line and anyone gets it; `derived` canon is the history the
+        canonist worked out about them, and that takes being on good terms.
+
+        Deliberately the only thing disposition gates upward, so that M4's gate
+        (the Archivist remembers your last run) and M7's (a backstory that is
+        not a death) both still hold at neutral.
+        """
+        kinds = ("authored", "derived") if is_warm(self._store, actor.id) else ("authored",)
+        rows = self._store.canon(actor.id, provenance=kinds, limit=CANON_LIMIT)
         return [Fact(f"canon:{r['id']}", r["text"]) for r in rows]
+
+    def _trade(self, state, actor, topic) -> list[Fact]:
+        """What they carry, and whether they are in a mood to part with it.
+
+        M8 left this route out on purpose -- "adding a route that returns
+        nothing would be a stub pretending to be a feature". It has somewhere to
+        resolve into now.
+        """
+        if is_wary(self._store, actor.id):
+            return []
+        return [
+            Fact(f"held:{r.get('id')}", f"You are carrying {r.get('name')}.")
+            for r in holdings(self._store, actor.id)
+        ][:WORLD_LIMIT]
 
     def _room(self, state, actor, topic) -> list[Fact]:
         room = state.room

@@ -18,7 +18,7 @@ from typing import Literal
 from ..world.model import Direction
 
 Verb = Literal["move", "look", "take", "use", "inventory", "attack", "talk",
-               "tell", "descend", "wait", "quit"]
+               "tell", "give", "request", "follow", "descend", "wait", "quit"]
 
 # Intent schema for the stage-2 fallback. Deliberately tiny -- every optional
 # field is tokens the model spends and we wait for.
@@ -63,6 +63,10 @@ VERB_ALIASES: dict[str, Verb] = {
     # claim *into* the world. Kept a deterministic verb rather than a tier-1
     # "was that a statement?" classifier, which is M8's route work.
     "tell": "tell", "say to": "tell", "inform": "tell",
+    # Social verbs. `ask X for Y` becomes `request` in `parse` -- the word that
+    # separates it from `ask X about Y` is the connective, not the verb.
+    "give": "give", "offer": "give", "hand": "give", "show": "give",
+    "follow": "follow",
     "descend": "descend", "stairs": "descend",
     "wait": "wait", "z": "wait",
     "quit": "quit", "exit": "quit", "q": "quit",
@@ -79,12 +83,40 @@ _ARTICLES = frozenset({"the", "a", "an"})
 # about. Splitting them is syntax, so it belongs here -- before M8 it happened
 # in `_topic_of()` inside the talk handler, three ordered stopword passes deep,
 # and every new social verb needed another pass.
-_ADDRESSED = frozenset({"talk", "tell"})
+_ADDRESSED = frozenset({"talk", "tell", "follow", "request"})
 
 # Sit on opposite sides of the name: "to archivist" is pure address, while
 # "about archivist" is a topic that happens to be the NPC.
 _ADDRESS_WORDS = frozenset({"to", "with", "at"})
 _TOPIC_WORDS = frozenset({"about", "for", "on", "regarding", "re"})
+
+
+def split_gift(target: str) -> tuple[str, str]:
+    """(addressee, item) for `give X to Y` -- the reverse of `talk`.
+
+    The thing comes first and the person after the connective, which is the
+    opposite order from every other addressed verb, so it gets its own split
+    rather than a flag on the general one.
+
+    With no connective, `give archivist the blade` reads as person-then-thing;
+    a bare `give blade` is a thing with no person, and the engine falls back to
+    whoever is present.
+    """
+    words = target.split()
+    for i, w in enumerate(words):
+        if w in _ADDRESS_WORDS:
+            return " ".join(words[i + 1 :]), " ".join(words[:i])
+    if len(words) >= 2:
+        return words[0], " ".join(words[1:])
+    return "", target
+
+
+def first_connective(target: str) -> str:
+    """The first topic word in a target, or "". Distinguishes ask-for from ask-about."""
+    for w in target.split():
+        if w in _TOPIC_WORDS:
+            return w
+    return ""
 
 
 def split_address(verb: str, target: str) -> tuple[str, str]:
@@ -112,9 +144,12 @@ def split_address(verb: str, target: str) -> tuple[str, str]:
         if w in _TOPIC_WORDS:
             return " ".join(words[:i]), " ".join(words[i + 1 :])
 
-    if verb == "tell":
+    # No connective. One word is a name; several are a name and a question --
+    # `ask archivist what are you carrying` is ordinary English, and reading the
+    # whole thing as an address made its topic empty, which routed it to the
+    # memory index and answered with a death.
+    if len(words) >= 2:
         return words[0], " ".join(words[1:])
-    # `talk`/`ask` with no connective: the whole thing is who, not what.
     return " ".join(words), ""
 
 # Verbs that never take a target. Trailing words after these are ignored rather
@@ -124,6 +159,9 @@ _INTRANSITIVE = frozenset({"inventory", "wait", "quit", "descend"})
 # "look"/"examine" filler that means no specific target -- "look around" must
 # not be read as an attempt to examine something named "around".
 _LOOK_FILLERS = frozenset({"around", "here", "about"})
+
+# "follow me" addresses whoever is standing there, not someone named "me".
+_SELF_WORDS = frozenset({"me", "us", "along"})
 
 
 def _normalise(text: str) -> str:
@@ -177,7 +215,20 @@ def parse(text: str) -> Intent | None:
         if verb == "look" and target in _LOOK_FILLERS:
             target = ""
 
-        addressee, target = split_address(verb, target)
+        # `ask archivist for the blade` and `ask archivist about the blade`
+        # share a verb and mean different things. The connective is what tells
+        # them apart, which is why the addressee slot had to exist first.
+        if verb == "talk" and first_connective(target) == "for":
+            verb = "request"
+
+        # "follow me" addresses whoever is present, not someone called "me".
+        if verb == "follow":
+            target = " ".join(w for w in target.split() if w not in _SELF_WORDS)
+
+        if verb == "give":
+            addressee, target = split_gift(target)
+        else:
+            addressee, target = split_address(verb, target)
         return Intent(verb=verb, target=target, addressee=addressee, raw=raw)
 
     return None
@@ -222,7 +273,10 @@ def infer(text: str, room_summary: str, client, policy) -> Intent:
         verb = "improvise"
 
     target = target if verb != "improvise" else _normalise(text)
-    addressee, target = split_address(verb, target)
+    if verb == "give":
+        addressee, target = split_gift(target)
+    else:
+        addressee, target = split_address(verb, target)
     return Intent(
         verb=verb,  # type: ignore[arg-type]
         target=target,

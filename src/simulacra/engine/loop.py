@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from ..world.director import direct_floor
 from ..world.floorgen import floor_rng, generate_floor
-from ..world.model import Direction, Room, RoomKind
+from ..world.model import Direction, Item, Room, RoomKind
 from .events import (
     Event,
     FloorDescended,
@@ -40,6 +40,7 @@ from .events import (
 from .combat import actors_attack, clear_dead, player_attacks
 from .judge import adjudicate, apply_verdict
 from .parser import _ADDRESS_WORDS, _TOPIC_WORDS, infer, parse
+from . import dealings
 from .routes import Router
 from .state import load_floor_identity, persist_floor, place_npcs
 
@@ -156,6 +157,9 @@ class Engine:
         # reply reached *persistent* memory, and a same-run scratch buffer
         # cannot reproduce it.
         self._conversations: dict[str, Conversation] = {}
+        # NPCs walking with the player. Run-scoped: their *position* persists on
+        # the node, but nobody keeps following you into a new run.
+        self._following: set[str] = set()
 
     # -- public ------------------------------------------------------------
 
@@ -217,6 +221,12 @@ class Engine:
                 yield from self._talk(intent.addressee, intent.target, intent.raw)
             case "tell":
                 yield from self._tell(intent.addressee, intent.target, intent.raw)
+            case "give":
+                yield from self._give(intent.addressee, intent.target)
+            case "request":
+                yield from self._request(intent.addressee, intent.target)
+            case "follow":
+                yield from self._follow(intent.addressee)
             case _:
                 yield Notice("I don't understand.")
 
@@ -283,6 +293,7 @@ class Engine:
         # Fleeing is free. An opposed flee roll is a tuning knob to add when
         # there is a reason to, not a default.
         self._resolved = True
+        self._bring_followers(self.state.room_id, dest)
         yield from self._enter_room(dest, via=direction.value)
 
     def _look(self, target: str = "") -> Iterator[Event]:
@@ -526,6 +537,161 @@ class Engine:
 
     def _personas(self) -> dict:
         return {n.anchor: n for n in self.theme.npcs}
+
+    # -- dealings ----------------------------------------------------------
+
+    def _face(self, addressee: str, verb: str):
+        """Resolve who is being dealt with, or emit the refusal and return None."""
+        npcs = [a for a in self.state.room.actors if not a.hostile]
+        if not npcs:
+            return None, Notice(f"There is no one here to {verb}.")
+        actor = _addressed(addressee, npcs)
+        if actor is None:
+            return None, Notice("Which of them? " + ", ".join(a.name for a in npcs) + ".")
+        return actor, None
+
+    def _says(self, actor, text: str) -> Iterator[Event]:
+        """An NPC speaks a line we already have. No model call."""
+        yield ProseStart(channel="npc", speaker=actor.name)
+        yield ProseDelta(text)
+        yield ProseEnd()
+
+    def _give(self, addressee: str, item_name: str) -> Iterator[Event]:
+        """Hand something over. The player's pack is checked in code first --
+        whether they are carrying it is not a question for the model."""
+        actor, problem = self._face(addressee, "give to")
+        if problem is not None:
+            yield problem
+            return
+
+        needle = (item_name or "").strip().lower()
+        item = next(
+            (i for i in self.state.player.inventory
+             if needle and (needle in i.name.lower() or i.name.lower() in needle)),
+            None,
+        )
+        if item is None:
+            yield Notice("You are not carrying that.")
+            return
+
+        persona = self._personas().get(actor.id)
+        if persona is None:
+            yield Notice("They want nothing from you.")
+            return
+
+        self._resolved = True
+        if dealings.is_wary(self.store, actor.id):
+            # Free: M8's rule is that a refusal code can decide is code's job.
+            yield from self._says(actor, "They will not take it from you.")
+            return
+
+        decision = dealings.decide_gift(persona, item, self.client, self.settings.judge)
+        if decision.act != "accept":
+            line = decision.reason if dealings.presentable(decision.reason) else ""
+            yield from self._says(actor, line or "They refuse it.")
+            return
+
+        self.state.player.inventory.remove(item)
+        dealings.take(self.store, actor.id, item)
+        dealings.bump(self.store, actor.id, dealings.GIFT_STEP)
+        self.state.met_npcs.add(actor.id)
+
+        line = decision.reason if dealings.presentable(decision.reason) else ""
+        # Names carry their article ("the Archivist"), so a fallback that starts
+        # with one needs the capital putting back.
+        fallback = f"{actor.name} takes it."
+        yield from self._says(actor, line or fallback[0].upper() + fallback[1:])
+        yield Line(f"You give {item.name} to {actor.name}.", style="good")
+        yield Transcript(
+            summary=f"A delver gave {item.name} to {actor.name} on floor {self.state.depth}.",
+            kind="event", subjects=(actor.id, f"room:{self.state.room_id}"),
+            tags=("gift",),
+        )
+
+    def _request(self, addressee: str, item_name: str) -> Iterator[Event]:
+        """Ask for something they carry. Disposition answers before the model does."""
+        actor, problem = self._face(addressee, "ask")
+        if problem is not None:
+            yield problem
+            return
+
+        persona = self._personas().get(actor.id)
+        if persona is None:
+            yield Notice("They have nothing for you.")
+            return
+
+        self._resolved = True
+        rows = dealings.holdings(self.store, actor.id)
+        if dealings.is_wary(self.store, actor.id) or not rows:
+            yield from self._says(actor, "They have nothing for you.")
+            return
+
+        decision = dealings.decide_request(
+            persona, item_name, rows, self.client, self.settings.judge
+        )
+        row = dealings.match(decision.object, rows) if decision.act == "give" else None
+        if row is None:
+            line = decision.reason if dealings.presentable(decision.reason) else ""
+            yield from self._says(actor, line or "They keep what they have.")
+            return
+
+        taken = dealings.release(self.store, actor.id, row["id"])
+        if taken is None:  # lost a race with itself; refuse rather than duplicate
+            yield from self._says(actor, "They keep what they have.")
+            return
+
+        self.state.player.inventory.append(Item(
+            id=taken["id"], name=taken["name"],
+            heal=int(taken.get("heal") or 0), damage=int(taken.get("damage") or 0),
+        ))
+        line = decision.reason if dealings.presentable(decision.reason) else ""
+        yield from self._says(actor, line or f"They hand you {taken['name']}.")
+        yield Line(f"You take {taken['name']}.", style="good")
+
+    def _follow(self, addressee: str) -> Iterator[Event]:
+        """Walk with me. Disposition answers -- no model call, ever.
+
+        Asking a 1.7b whether it feels like walking with you spends a tier-1
+        call on a decision code makes correctly every time.
+        """
+        actor, problem = self._face(addressee, "ask")
+        if problem is not None:
+            yield problem
+            return
+
+        self._resolved = True
+        if actor.id in self._following:
+            self._following.discard(actor.id)
+            yield from self._says(actor, "They stop where they are.")
+            return
+
+        if not dealings.is_warm(self.store, actor.id):
+            yield from self._says(actor, "They stay where they are.")
+            return
+
+        self._following.add(actor.id)
+        yield from self._says(actor, "They fall in behind you.")
+
+    def _bring_followers(self, from_id: str, to_id: str) -> None:
+        """Move anyone walking with the player, and write down where they are.
+
+        M7 inverted placement so `floorgen` proposes and the world disposes.
+        This is the task that cashes that claim, and it is these nine lines.
+        """
+        if not self._following:
+            return
+        src, dst = self.state.floor.rooms.get(from_id), self.state.floor.rooms.get(to_id)
+        if src is None or dst is None:
+            return
+        for anchor in list(self._following):
+            actor = next((a for a in src.actors if a.id == anchor), None)
+            if actor is None:
+                continue
+            src.actors.remove(actor)
+            dst.actors.append(actor)
+            data = self.store.node_data(anchor)
+            data["room_id"] = to_id
+            self.store.set_node_data(anchor, data)
 
     # -- consequence -------------------------------------------------------
 

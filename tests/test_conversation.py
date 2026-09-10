@@ -65,6 +65,10 @@ def talk(store, theme, command: str) -> EmbedRecording:
 
 @pytest.mark.parametrize("target,addressee,topic", [
     ("archivist about arm", "archivist", "arm"),
+    # No connective at all. `ask archivist what are you carrying` is ordinary
+    # English; reading the whole thing as an address left the topic empty, which
+    # routed it to the memory index and answered a trade question with a death.
+    ("archivist what are you carrying", "archivist", "what are you carrying"),
     ("to archivist", "archivist", ""),
     ("archivist", "archivist", ""),
     ("", "", ""),

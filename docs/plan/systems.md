@@ -370,8 +370,16 @@ buffer cannot reproduce the M4 bug because it never becomes persistent knowledge
 Trade, gifts and NPC movement are all the same shape: something proposes a change
 to the world, and code decides whether it happens. That is §7 of plan.md — *the
 LLM proposes, code disposes* — generalised from improvised player actions to
-cover NPC decisions and monster behaviour under **one** vocabulary rather than
-three subsystems.
+cover NPC decisions.
+
+**Amended by M9, which built it.** Two thirds of the original claim held. Monster
+behaviour does *not* join them: routing it through a tier-1 call would put one on
+every combat turn, and `combat.py` is dice — seedable and testable without a
+model. And one schema does not fit both callers, because the judge resolves a
+*physical* action with dice while a gift is a *social* choice with none. What
+generalises is the architecture — a closed enum, code validating against state
+the model does not get to assert, code clamping the result — so `dealings.py` is
+its second instance rather than its second copy.
 
 ```json
 {"action": "give|accept|refuse|follow|lead|warn|move|attack|nothing",
@@ -458,7 +466,7 @@ floorgen/director throughout: **structure is code's, identity is the model's.**
 | **M6** ✅ | Persistent world + reset | S0 — world table, seed split, recompute-and-reattach, `--new-world` / `--forget` | **Met.** Run 2 reached floor 3 with 0 model calls and 0.0 s of wall time |
 | **M7** ✅ | Canon | S1 — `canon` table, provenance, persistent NPC entities, derived-canon refresh | **Met.** The Archivist now counts its dead, grown from deaths rather than authored |
 | **M8** ✅ | Routes + session | S2 + S3, and the parser's topic slot | **Met.** Ten questions, ten answers, from five sources; 90–100% of routes cost nothing |
-| **M9** | Action vocabulary | S4 — trade, gifts, NPC movement, disposition | A gift changes what an NPC will tell you |
+| **M9** ✅ | Action vocabulary | S4 — trade, gifts, NPC movement, disposition | **Met.** A gift unlocks the NPC's derived canon, live |
 | **M10** | Lazy expansion | S5 — slots, budget, discovery-as-canon | A shelf found on run 1 is still there on run 4 |
 
 M8 is one milestone containing two systems on purpose. Routes without a session
@@ -469,8 +477,9 @@ alone would read as no improvement.
 Task decomposition follows the existing convention — one `docs/tasks/M<n>-*.md`
 per milestone, written before implementation and amended with findings after.
 [M6](../tasks/M6-persistent-world-tasks.md),
-[M7](../tasks/M7-canon-tasks.md) and
-[M8](../tasks/M8-routes-tasks.md) are **done, with findings**.
+[M7](../tasks/M7-canon-tasks.md),
+[M8](../tasks/M8-routes-tasks.md) and
+[M9](../tasks/M9-action-vocabulary-tasks.md) are **done, with findings**.
 
 ---
 

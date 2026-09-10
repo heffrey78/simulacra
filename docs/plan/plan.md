@@ -426,7 +426,40 @@ failed a new one.
 | turns that embed | every one | 3 of 10 |
 | refusal / repeat turns | invented an answer | 0.0 s, no model call |
 
-**M9+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
+**M9 — Action vocabulary** ✅ *done* · **[task record →](../tasks/M9-action-vocabulary-tasks.md)**
+NPCs stop only knowing things and start doing them. `give`, `ask X for Y` and
+`follow` reach a closed decision enum in
+[dealings.py](../../src/simulacra/engine/dealings.py); the model proposes and
+code disposes, matching every named object against things that actually exist so
+an NPC can never hand over something invented — permanently, in a world that
+persists. Disposition is an int on the NPC's node, moved by a fixed step per
+gift and never by a number the model supplied, and **a gift buys a route, not an
+item**: `derived` canon unlocks at the warm band. Measured live, same question
+either side of one gift:
+
+```
+[disposition 0] You have kept the ledger since before the current numbering began.
+[disposition 1] The ledger is yours. ... You number both doors and delvers.
+```
+
+Every refusal disposition can decide costs **0.0 s** — no model call — which is
+M8's finding applied one layer out. One tier-1 call per social decision, none
+anywhere else.
+
+**A latent bug this surfaced, live since M4.** `_talk` touches the NPC's node to
+update `last_run`, and `upsert_node`'s `data=None` meant `{}` — so every
+conversation turn erased that NPC's entire blob. Harmless while NPC nodes carried
+nothing; from M7 it was quietly wiping `canon_memories` (so the canonist kept
+re-deriving canon it had already written), and from M9 it erased a gift between
+one turn and the next, which is how it was found. `data=None` now preserves.
+
+That is the third of its shape in four milestones: a helper written when one
+caller existed, whose default became wrong when a second arrived, failing
+silently. M7's canonist had no output guard, M8's echo guard had the wrong rule
+for dialogue, M9's node touch had the wrong default. None was caught by a test
+written at the time; all three were caught by playing it.
+
+**M10 — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
 The POC's conversation work stalled for a structural reason, not a tuning one:
 the memory system has exactly one class of content in it (deaths), the graph is
 written and never read, and the parser's single `target` slot forces an ad-hoc

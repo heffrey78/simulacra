@@ -422,13 +422,26 @@ class Store:
     def upsert_node(
         self, node_id: str, kind: str, name: str, data: dict | None = None, run_id: int | None = None
     ) -> None:
+        """Create or touch a node.
+
+        **`data=None` leaves any existing blob alone.** It used to mean `{}`,
+        which made touching a node to update `last_run` silently erase
+        everything on it -- `_talk` does exactly that on every conversation
+        turn, so an NPC's disposition, inventory, home room and canon gate were
+        wiped every time the player spoke to them. Invisible until M7 put state
+        on those nodes and M9 started moving it.
+
+        Pass an explicit `{}` to actually clear a node.
+        """
         with self._lock:
+            if data is None:
+                data = self.node_data(node_id)
             self.db.execute(
                 """INSERT INTO nodes (id, kind, name, data, first_run, last_run)
                    VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                        name=excluded.name, data=excluded.data, last_run=excluded.last_run""",
-                (node_id, kind, name, json.dumps(data or {}), run_id, run_id),
+                (node_id, kind, name, json.dumps(data), run_id, run_id),
             )
 
     def link(
@@ -452,6 +465,29 @@ class Store:
     def node(self, node_id: str) -> sqlite3.Row | None:
         with self._lock:
             return self.db.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+
+    def node_data(self, node_id: str) -> dict:
+        """A node's JSON blob, or {}. Three modules were unpacking this by hand."""
+        node = self.node(node_id)
+        if node is None:
+            return {}
+        try:
+            return json.loads(node["data"] or "{}")
+        except (TypeError, ValueError):
+            return {}
+
+    def set_node_data(self, node_id: str, data: dict) -> None:
+        """Replace a node's blob, keeping its kind and name.
+
+        Read-modify-write, so callers must not hold a stale copy across an
+        await-shaped gap. Nothing in this engine does -- the turn loop is
+        synchronous and the only background threads write memories and canon.
+        """
+        node = self.node(node_id)
+        if node is None:
+            return
+        self.upsert_node(node_id, node["kind"], node["name"], data)
+        self.commit()
 
     def floor_names(self, *, below_depth: int, limit: int = 3) -> list[str]:
         """Names of the world's already-identified floors, nearest first.
@@ -671,6 +707,9 @@ class Store:
             data = json.loads(node["data"] or "{}")
             data["canon_memories"] = 0
             data["last_canon_run"] = None
+            # How they feel about you is part of what they know about you. An
+            # NPC that has forgotten everything should not still resent you.
+            data["disposition"] = 0
             self.upsert_node(node_id, node["kind"], node["name"], data)
             self.commit()
 
