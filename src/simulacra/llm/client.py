@@ -46,10 +46,6 @@ class CallRecord:
     eval_s: float = 0.0
     load_s: float = 0.0
 
-    @property
-    def tok_per_s(self) -> float:
-        return self.eval_tokens / self.eval_s if self.eval_s > 0 else 0.0
-
 
 @dataclass
 class Telemetry:

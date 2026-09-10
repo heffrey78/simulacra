@@ -516,6 +516,37 @@ this hardware actually has.
 
 ---
 
+**M11 — Playtest fixes** ✅ *done* · **[task record →](../tasks/M11-playtest-fixes-tasks.md)** · **[playtest →](../playtests/2026-09-10.md)**
+The first extended play after the plan finished, and it found more than five
+milestones of tests had. A taken jar stayed in the room description forever,
+because the narrator was shown items and its prose was cached for the life of
+the world. `search` re-described the room and filed it as a discovery — all ten
+in that session's world were keyed on the room's own name. "Braced" was named
+for the opposite of what the judge meant, printed twice, and did nothing. The
+TUI bound Textual's copy key to quit. Nothing wrote a transcript.
+
+The pattern underneath most of it was the tier-1 parser fallback: players
+reached for `search`, `hide`, `equip`, `enter`, and each one cost a model call
+and got routed by a small model that lifts targets from the room. Making them
+real verbs was the highest-leverage fix. Replaying the playtest's own commands
+against the world it was played in:
+
+| | before | after |
+|---|---|---|
+| tier-1 calls | 13 | **1** |
+| jar in the description after `take` | yes | no — in the old world too |
+| `search` | re-described the room | a fixture the room hadn't named, or "nothing more", free |
+| `hide`, `equip` | the judge, inventing | code, free |
+
+**The replay found one more bug, live since M10.** `persist_floor` wrote each
+room node's data wholesale on every run, erasing the index M10 keeps there — so
+a discovery could be replayed only in the run that made it, and the next search
+filed the same find again as something new. M10's test had skipped `begin()`,
+the one step that persists a floor. It's the fourth bug of one shape: a node's
+data blob is shared by several systems, and two of the four were writers
+replacing it instead of merging.
+
+
 ## 10. State of the repo
 
 Built and verified:
@@ -627,7 +658,4 @@ floor at depth 1 rising to 4.5 at depth 12 — so floors are still graphs, not
 hallways. Four tests lock this in, including one asserting the guard did not
 reject loops into nonexistence.
 
-**Not yet decided:** whether floors persist across runs (same seed → same
-dungeon, "you find your own corpse") or regenerate each time. Persisting is more
-thematically apt and makes the graph richer; regenerating gives more variety.
-Deferred to M4, when there's something real to feel it against.
+**Decided: floors persist.** Resolved in [M6](../tasks/M6-persistent-world-tasks.md): the world seed decides layout at every depth and the model's contribution is stored and re-attached, so run 2 of a world walks the same floors at no model cost. This paragraph still said "deferred to M4" until the M11 closeout found it.

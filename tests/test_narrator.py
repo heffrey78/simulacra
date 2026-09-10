@@ -154,8 +154,11 @@ def test_census_is_labelled_data_not_prose(floor, theme, store):
 
     assert census.startswith("ROOM:")
     assert "EXITS:" in census
-    assert "CONTAINS:" in census
-    assert room.items[0].name in census
+    # M11: items and actors are no longer shown to the narrator. The prose is
+    # cached for the life of the world, so anything in it stays in it -- the
+    # 2026-09-10 playtest took a jar and the room still described it.
+    assert "CONTAINS:" not in census
+    assert room.items[0].name not in census
 
 
 def test_banned_words_reach_the_system_prompt(floor, theme, store):

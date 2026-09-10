@@ -227,10 +227,6 @@ class Recollection:
     # on phrasing. `recall` already selects `m.*`; this row was always here.
     id: int = 0
 
-    @property
-    def age_runs(self) -> int:
-        return self.run_id
-
 
 class Store:
     def __init__(

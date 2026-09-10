@@ -375,7 +375,9 @@ class SimulacraApp(App[None]):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "leave", "quit", priority=True, show=True),
+        # Not ctrl+c (M11). That is Textual's copy key, and binding it to quit
+        # with priority meant selecting text and copying it closed the game.
+        Binding("ctrl+q", "leave", "quit", priority=True, show=True),
         Binding("ctrl+l", "clear_log", "clear", priority=True, show=True),
         Binding("escape", "leave", "quit", show=False),
     ]
@@ -609,6 +611,11 @@ class SimulacraApp(App[None]):
         cmd.remember(text)
         # Echoed so the log reads as a conversation rather than a monologue.
         self.query_one("#log", RichLog).write(Text(f"> {text}", style="bold cyan"))
+        # Commands are not events, so an observer that records the session
+        # (the transcript) is told about them directly.
+        for observer in self.observers:
+            if hasattr(observer, "command"):
+                observer.command(text)
         cmd.disabled = True
         self.run_turn(text)
 
@@ -653,6 +660,8 @@ def play_tui(session) -> None:
     """
     SimulacraApp(
         session.engine,
-        observers=(session.memory,),
+        observers=tuple(
+            o for o in (session.memory, getattr(session, "transcript", None)) if o is not None
+        ),
         on_end=session.note_end,
     ).run()

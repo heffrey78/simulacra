@@ -18,7 +18,8 @@ from typing import Literal
 from ..world.model import Direction
 
 Verb = Literal["move", "look", "take", "use", "inventory", "attack", "talk",
-               "tell", "give", "request", "follow", "descend", "wait", "quit"]
+               "tell", "give", "request", "follow", "search", "hide", "equip",
+               "enter", "descend", "wait", "quit"]
 
 # Intent schema for the stage-2 fallback. Deliberately tiny -- every optional
 # field is tokens the model spends and we wait for.
@@ -67,6 +68,14 @@ VERB_ALIASES: dict[str, Verb] = {
     # separates it from `ask X about Y` is the connective, not the verb.
     "give": "give", "offer": "give", "hand": "give", "show": "give",
     "follow": "follow",
+    # M11: the verbs the 2026-09-10 playtest reached for. Each one the parser did
+    # not know cost a tier-1 call and was routed by a model that lifts targets
+    # from the room -- `search` became `look at <the room's own name>` ten times
+    # out of ten in that session's world file.
+    "search": "search", "rummage": "search", "loot": "search",
+    "hide": "hide",
+    "equip": "equip", "wield": "equip",
+    "enter": "enter",
     "descend": "descend", "stairs": "descend",
     "wait": "wait", "z": "wait",
     "quit": "quit", "exit": "quit", "q": "quit",
@@ -154,7 +163,7 @@ def split_address(verb: str, target: str) -> tuple[str, str]:
 
 # Verbs that never take a target. Trailing words after these are ignored rather
 # than treated as a parse failure.
-_INTRANSITIVE = frozenset({"inventory", "wait", "quit", "descend"})
+_INTRANSITIVE = frozenset({"inventory", "wait", "quit", "descend", "hide"})
 
 # "look"/"examine" filler that means no specific target -- "look around" must
 # not be read as an attempt to examine something named "around".
@@ -271,6 +280,14 @@ def infer(text: str, room_summary: str, client, policy) -> Intent:
     # Degrading to improvise is safe; the judge just rules on it instead.
     if verb in ("take", "use") and target and target not in _normalise(text):
         verb = "improvise"
+
+    # The same lifting drove the playtest's search bug through `look`: "search
+    # offcut", with the offcut already dead, became a look at "lair of the
+    # forgotten" -- the room's name, taken from the summary. A look target that
+    # shares no word with what the player typed is dropped, not trusted.
+    if verb in ("look", "search") and target:
+        if not set(target.split()) & set(_normalise(text).split()):
+            target = ""
 
     target = target if verb != "improvise" else _normalise(text)
     if verb == "give":

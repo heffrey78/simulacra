@@ -183,11 +183,17 @@ def test_what_a_room_showed_you_survives_the_run(room):
     later = new_run(store, engine.theme, Settings(), seed=99)
     engine2 = Engine(later, store, Settings(), engine.theme,
                      narrator=engine.narrator, client=client)
+    # begin() is the step that matters: it persists the floor, and until M11
+    # that rewrote every room node's blob and erased the `found` index. This
+    # test used to skip it, and so passed while cross-run replay was broken --
+    # found by replaying the 2026-09-10 playtest against its own world.
+    list(engine2.begin())
     later.room_id = here.id
     client.script = ["SOMETHING COMPLETELY DIFFERENT"]
+    before = client.streams
 
     assert FOUND in said(list(engine2.turn("look at the altar")))
-    assert client.streams == 1
+    assert client.streams == before, "the find was re-generated on the next run"
 
 
 def test_a_discovery_is_not_takeable(room):
@@ -313,3 +319,17 @@ def test_every_word_of_the_search_reaches_the_find(room):
     assert FOUND in said(list(engine.turn("look at the altar")))
     assert FOUND in said(list(engine.turn("look at the cracked")))
     assert client.streams == 1
+
+
+def test_persisting_a_floor_keeps_what_other_systems_stored(room):
+    """`persist_floor` rewrote each room node's data wholesale on every run,
+    erasing M10's `found` index -- so a discovery could be replayed only in the
+    run that made it, and the next run re-discovered it as something new."""
+    from simulacra.engine.state import persist_floor
+
+    engine, state, store, client, here = room
+    list(engine.turn("look at the altar"))
+    assert store.node_data(f"room:{here.id}").get("found")
+
+    persist_floor(store, state.floor, state.run_id)
+    assert store.node_data(f"room:{here.id}").get("found"), "persisting erased the index"

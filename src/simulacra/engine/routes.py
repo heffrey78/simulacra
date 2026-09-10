@@ -281,6 +281,15 @@ class Router:
             concept = (json.loads(node["data"] or "{}").get("concept") or "").strip()
             if concept:
                 out.append(Fact(f"room:{room.id}:concept", concept))
+        # M11: what the player has turned up here. Discoveries are canon on this
+        # node, and until now the route that answers "what is this place" read
+        # only the director's concept -- so the NPC standing beside something
+        # you had just found had never heard of it.
+        try:
+            for r in self._store.canon(f"room:{room.id}", provenance="derived", limit=2):
+                out.append(Fact(f"canon:{r['id']}", r["text"]))
+        except Exception:
+            pass
         if room.exits:
             ways = ", ".join(d.value for d in room.exits)
             out.append(Fact(f"room:{room.id}:exits", f"Ways out: {ways}."))

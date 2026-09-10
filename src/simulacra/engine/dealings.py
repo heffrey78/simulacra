@@ -31,7 +31,6 @@ from dataclasses import dataclass
 # Bands. Disposition is an int on the NPC's node, so it outlives the run -- a
 # player who attacks someone has done something lasting.
 WARY = -1
-NEUTRAL = 0
 # One meaningful gift crosses it. Items are scarce enough on a floor that
 # requiring two means the band is never reached in an ordinary run, and a band
 # nobody reaches is the same as not having one.

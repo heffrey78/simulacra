@@ -39,6 +39,10 @@ from ..world.model import Floor, Room
 # catch an echo, small enough that the pause is imperceptible.
 GUARD_PREFIX_CHARS = 48
 
+# Bumped when the room prompt changes shape, so cached prose from the old shape
+# is regenerated rather than replayed. 2 = M11, items and actors removed.
+PROSE_VERSION = 2
+
 # Labels that only ever appear in the prompt. Any of them in the output means
 # the model is transcribing rather than writing.
 _CENSUS_LABELS = (
@@ -129,10 +133,12 @@ class Narrator:
             lines.append(f"CONCEPT: {room.concept}")
         if floor.motifs:
             lines.append(f"MOTIFS: {', '.join(floor.motifs)}")
-        if room.items:
-            lines.append(f"CONTAINS: {', '.join(i.name for i in room.items)}")
-        if room.actors:
-            lines.append(f"PRESENT: {', '.join(a.name for a in room.actors)}")
+        # No items, no actors (M11). Prose is cached, and since M6 the cache
+        # outlives the run -- so anything the narrator is shown here is in the
+        # description forever. The playtest took a jar of water and the room
+        # still said "the jar of clean water sits beside the door, untouched".
+        # `Engine._contents` lists what is actually here, every visit, which is
+        # what M2 always meant the narrator's version to be backed by.
         lines.append(f"EXITS: {', '.join(d.value for d in room.exits)}")
         return "\n".join(lines)
 
@@ -155,8 +161,11 @@ class Narrator:
     def _key(self, floor: Floor, room: Room) -> str:
         # Concept is part of the key: if the director renames a floor, stale
         # prose describing the old concept must not survive.
+        # PROSE_VERSION changes whenever the prompt's shape does. Worlds made
+        # before M11 hold prose written from a census that listed items; without
+        # the salt those keys would still match and the stale jar would stay.
         digest = hashlib.sha1(
-            f"{self._theme.name}|{room.concept}|{floor.theme_name}".encode()
+            f"{PROSE_VERSION}|{self._theme.name}|{room.concept}|{floor.theme_name}".encode()
         ).hexdigest()[:8]
         return f"prose:{room.id}:{digest}"
 

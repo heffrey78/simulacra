@@ -34,6 +34,7 @@ from .memory.store import Store, WorldError, archive_world
 from .memory.writer import MemoryWriter
 from .narrate.narrator import Narrator
 from .narrate.prefetch import Prefetcher
+from .ui.transcript import TranscriptWriter
 from .world.theme import Theme
 
 
@@ -42,7 +43,7 @@ class Session:
     share. Frontends consume `engine`; they never assemble one."""
 
     def __init__(self, settings, theme, store, state, engine, memory, client, prefetcher,
-                 *, canon: bool = True):
+                 *, canon: bool = True, transcript=None):
         self.settings = settings
         self.theme = theme
         self.store = store
@@ -52,6 +53,7 @@ class Session:
         self.client = client
         self.prefetcher = prefetcher
         self.canon = canon
+        self.transcript = transcript
         # A frontend sets these when it sees RunEnded. "abandoned" is the honest
         # default: a closed window is not a death.
         self.cause = "abandoned"
@@ -77,6 +79,9 @@ class Session:
             )
             if grown:
                 print(f"[canon: {len(grown)} new]", file=sys.stderr)
+
+        if self.transcript is not None:
+            self.transcript.close()
 
         self.store.end_run(
             self.state.run_id, cause=self.cause, depth=self.state.depth,
@@ -143,8 +148,13 @@ def build_session(args, settings: Settings, theme: Theme) -> Session:
     # Memory is an observer of the same event stream, not a dependency of the
     # turn loop. See memory/writer.py for why reads are not symmetric.
     memory = MemoryWriter(store, state, client=client, embed_policy=settings.embed)
+    # One file per run, beside the world it belongs to (M11).
+    transcript = TranscriptWriter(
+        settings.db_path.parent / "transcripts"
+        / f"{settings.db_path.stem}-run{state.run_id}.txt"
+    )
     return Session(settings, theme, store, state, engine, memory, client, prefetcher,
-                   canon=not args.no_canon)
+                   canon=not args.no_canon, transcript=transcript)
 
 
 def play_repl(session: Session) -> None:
@@ -153,18 +163,21 @@ def play_repl(session: Session) -> None:
     from .ui.repl import ReplRenderer, read_input
 
     renderer = ReplRenderer()
-    engine, memory, state = session.engine, session.memory, session.state
+    engine, state = session.engine, session.state
+    observers = [o for o in (renderer, session.memory, session.transcript) if o is not None]
 
     for event in engine.begin():
-        renderer.handle(event)
-        memory.handle(event)
+        for observer in observers:
+            observer.handle(event)
 
     while state.player.alive:
         text = read_input()
+        if session.transcript is not None:
+            session.transcript.command(text)
         ended = False
         for event in engine.turn(text):
-            renderer.handle(event)
-            memory.handle(event)
+            for observer in observers:
+                observer.handle(event)
             if isinstance(event, RunEnded):
                 session.note_end(event)
                 ended = True
@@ -272,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
     # run seed only replays the dice.
     print(f"\nworld seed {session.state.world_seed} in {session.settings.db_path} "
           f"-- this run's dice: --seed {session.state.seed}")
+    if session.transcript is not None:
+        print(f"transcript: {session.transcript.path}")
     return 0
 
 

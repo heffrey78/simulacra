@@ -15,6 +15,7 @@ MILESTONE M1 (movement) -> M3 (combat) -> M4 (memory).
 
 from __future__ import annotations
 
+import random
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -32,13 +33,22 @@ from .events import (
     ProseDelta,
     ProseEnd,
     ProseStart,
+    Roll,
     RoomEntered,
     RunEnded,
     StatusChanged,
     Thinking,
     Transcript,
 )
-from .combat import actors_attack, clear_dead, player_attacks
+from .combat import (
+    HIDDEN,
+    HIDE_DIFFICULTY,
+    actors_attack,
+    attack_roll,
+    best_weapon,
+    clear_dead,
+    player_attacks,
+)
 from .judge import adjudicate, apply_verdict
 from .parser import _ADDRESS_WORDS, _TOPIC_WORDS, infer, parse
 from . import dealings
@@ -124,6 +134,18 @@ class Conversation:
     # facts-alone stonewalled questions the player had never asked. Measured
     # live: "ask about the seams in the wall" answered "It is already entered."
     asked: set[str] = field(default_factory=set)
+
+
+# `enter` descends when aimed at any of these in a descent room.
+_STAIR_WORDS = frozenset({
+    "stair", "stairs", "steps", "ladder", "ladderway", "shaft", "descent",
+    "down", "winze", "chute",
+})
+
+
+def _cap(text: str) -> str:
+    """Names carry their article ("the Archivist"); a sentence needs a capital."""
+    return text[:1].upper() + text[1:]
 
 
 class Engine:
@@ -228,6 +250,14 @@ class Engine:
                 yield from self._request(intent.addressee, intent.target)
             case "follow":
                 yield from self._follow(intent.addressee)
+            case "search":
+                yield from self._search_verb(intent.target, intent.raw)
+            case "hide":
+                yield from self._hide()
+            case "equip":
+                yield from self._equip(intent.target)
+            case "enter":
+                yield from self._enter(intent.target)
             case _:
                 yield Notice("I don't understand.")
 
@@ -338,22 +368,16 @@ class Engine:
             return []
 
     def _search(self, target: str) -> Iterator[Event]:
-        """The player looked at something the room does not list.
+        """The player looked at something the room does not list (M10).
 
         Before M10 this was always "You don't see that here" -- including for
-        nouns the room's own prose had just used, which is the engine
-        contradicting what the player read.
+        nouns the room's own prose had just used.
         """
         room = self.state.room
         wanted = discovery.words(target)
 
-        # Found before? Then it is still there, and still the same thing. A room
-        # that invents a different altar every visit is worse than one with no
-        # altar at all.
-        #
-        # Looked up by *what was searched for*, not by word overlap with the
-        # description: measured live, `look at the surface` replayed the door,
-        # because the door's description happened to use the word "surface".
+        # Found before? Then it is still there, and still the same thing --
+        # looked up by what was searched for, not by overlap with the text.
         index = self.store.node_data(f"room:{self.state.room_id}").get("found") or {}
         for word in wanted:
             if (row := self.store.canon_by_id(index.get(word))) is not None:
@@ -361,13 +385,24 @@ class Engine:
                 yield ProseDelta(row["text"])
                 yield ProseEnd()
                 return
-        found = self._room_canon()
+
+        # The room itself is not a find (M11). Every one of the playtest's ten
+        # discoveries was keyed on the room's own name: "search" in the
+        # narrowing became a look at "narrowing", which generated a second
+        # description of the whole room and filed it as something found.
+        if wanted and wanted <= discovery.words(room.name):
+            # Through `_look`, not `_describe`: room text has exactly one
+            # producer, and test_seam enforces who may call it. Searching the
+            # room you are standing in is looking around, which is what `_look`
+            # already is.
+            yield from self._look()
+            return
 
         if self.narrator is None:
             yield Notice(f"You don't see {target} here.")
             return
 
-        if len(found) >= discovery.DISCOVERY_BUDGET:
+        if len(self._room_canon()) >= discovery.DISCOVERY_BUDGET:
             # Exhausted. No roll, no call -- the budget caps new content, not
             # access to what is already there.
             yield Notice(f"You don't see {target} here.")
@@ -378,14 +413,21 @@ class Engine:
             yield Notice(f"You don't see {target} here.")
             return
 
-        # Rummaging is not eyeballing. A plain `look` stays free and never
-        # provokes; searching until you turn something up takes a turn, and
-        # doing it with something hostile in the room should cost you.
+        yield from self._discover(target)
+
+    def _discover(self, target: str) -> Iterator[Event]:
+        """Describe one find and write it down. The caller has decided it may.
+
+        Rummaging is not eyeballing: a plain `look` stays free and never
+        provokes; turning something up takes a turn, and doing it with
+        something hostile in the room should cost you.
+        """
         self._resolved = True
+        wanted = discovery.words(target)
 
         yield ProseStart(channel="detail")
         parts: list[str] = []
-        for piece in self.narrator.discover(target, room):
+        for piece in self.narrator.discover(target, self.state.room):
             parts.append(piece)
             yield ProseDelta(piece)
         yield ProseEnd()
@@ -399,14 +441,143 @@ class Engine:
             node = f"room:{self.state.room_id}"
             canon_id = self.store.add_canon(node, text, "derived",
                                             source_run=self.state.run_id)
-            # Every word of what they typed points at this find, so "the cracked
-            # altar" and "altar" both reach it later.
+            # Every word of what was searched for points at this find, so "the
+            # cracked altar" and "altar" both reach it later.
             data = self.store.node_data(node)
             data["found"] = {**(data.get("found") or {}),
                              **{w: canon_id for w in wanted}}
             self.store.set_node_data(node, data)
         except Exception:
             pass
+
+    def _search_room(self) -> Iterator[Event]:
+        """Bare `search`: look for what the room has *not* already said (M11).
+
+        The playtest's complaint was that search re-described the room. So this
+        only ever reaches for a fixture the room's name, concept and prose have
+        not used, and only in a fertile room with budget left. Otherwise there is
+        nothing more to find, and saying so costs no model call.
+        """
+        room = self.state.room
+        self._resolved = True
+        nothing = Notice("You find nothing more here.")
+
+        if self.narrator is None:
+            yield nothing
+            return
+        found = self._room_canon()
+        if (len(found) >= discovery.DISCOVERY_BUDGET
+                or not discovery.is_fertile(room.id, self.state.world_seed)):
+            yield nothing
+            return
+
+        index = self.store.node_data(f"room:{room.id}").get("found") or {}
+        said = (discovery.words(room.name) | discovery.words(room.concept)
+                | discovery.words(room.prose))
+        fresh = [
+            f for f in self.theme.fixture_names(room.kind)
+            if not discovery.words(f) & (said | set(index))
+        ]
+        if not fresh:
+            yield nothing
+            return
+
+        # Seeded by room and by how much it has already given up, so the same
+        # room yields the same things in the same order in every run.
+        pick = random.Random(
+            f"search:{self.state.world_seed}:{room.id}:{len(found)}"
+        ).choice(fresh)
+        yield from self._discover(pick)
+
+    def _search_verb(self, target: str, raw: str = "") -> Iterator[Event]:
+        """`search`, `rummage`, `loot`."""
+        if raw.split()[:1] == ["loot"] and target:
+            room = self.state.room
+            wanted = discovery.words(target)
+            here = [*room.items, *room.actors]
+            if not any(wanted & discovery.words(x.name) for x in here):
+                # The dead are removed when they fall, and carry nothing. Say so
+                # rather than search the walls, which is what this used to do.
+                yield Notice("Whatever that was, it left nothing behind to take.")
+                return
+        if target:
+            yield from self._look_at(target)
+            return
+        yield from self._search_room()
+
+    def _hide(self) -> Iterator[Event]:
+        """Get out of sight (M11). A roll, a turn, and a real effect.
+
+        Hidden, the next monster round passes you by, and your next attack gets
+        a bonus and ends it. You cannot hide again while you are still hidden.
+        """
+        player = self.state.player
+        if HIDDEN in player.effects:
+            yield Notice("You're already out of sight.")
+            return
+        hostiles = [a for a in self.state.room.actors if a.hostile and a.hp > 0]
+        if not hostiles:
+            yield Notice("There's nothing here to hide from.")
+            return
+
+        self._resolved = True
+        total, success = attack_roll(player.attack, HIDE_DIFFICULTY, self.state.rng)
+        yield Roll(label="hide", total=total, target=HIDE_DIFFICULTY, success=success)
+        if not success:
+            return
+        # Two: it has to survive the tick that follows this turn's monster round
+        # to still be there for the attack that ends it.
+        player.effects[HIDDEN] = 2
+        yield Line("You get out of sight.", style="good")
+        yield self._status()
+
+    def _equip(self, target: str) -> Iterator[Event]:
+        """Say what is in hand -- honestly (M11).
+
+        Combat always swings the highest-damage weapon carried. Until weapons
+        differ in more than damage, letting the player pick a worse one would be
+        a choice with no decision in it, so `equip` reports rather than changes.
+        """
+        weapon = best_weapon(self.state.player)
+        if target:
+            wanted = discovery.words(target)
+            named = next((i for i in self.state.player.inventory
+                          if wanted & discovery.words(i.name)), None)
+            if named is None:
+                yield Notice("You aren't carrying that.")
+                return
+            if named.damage <= 0:
+                yield Line(f"{_cap(named.name)} is no weapon.")
+                return
+            if weapon is not None and named is not weapon:
+                yield Line(f"You keep {weapon.name} in hand; it hits harder than {named.name}.")
+                return
+        if weapon is None:
+            yield Line("You have nothing to fight with but your hands.")
+            return
+        yield Line(f"You're holding {weapon.name}. You always fight with the best you carry.")
+
+    def _enter(self, target: str) -> Iterator[Event]:
+        """`enter <place>`: the stairs, a neighbouring room by name, or a look (M11)."""
+        room = self.state.room
+        wanted = discovery.words(target)
+
+        if room.kind is RoomKind.DESCENT and (
+            not wanted or wanted & _STAIR_WORDS or wanted <= discovery.words(room.name)
+        ):
+            yield from self.descend()
+            return
+        if not wanted:
+            yield Notice("Enter what?")
+            return
+
+        for direction, dest in room.exits.items():
+            neighbour = self.state.floor.rooms.get(dest)
+            if neighbour is not None and wanted & discovery.words(neighbour.name):
+                yield from self._move(direction.value)
+                return
+
+        yield from self._look_at(target)
 
     def _describe_detail(self, kind: str, name: str) -> Iterator[Event]:
         if self.narrator is None:
@@ -461,6 +632,23 @@ class Engine:
 
     def _attack(self, target: str) -> Iterator[Event]:
         room = self.state.room
+
+        # M11: the wary band's door. Attacking an NPC was filtered out before it
+        # reached them, so disposition could never go below zero by anything a
+        # player could do. NPCs are persistent and cannot be hurt -- but they can
+        # be frightened, and they remember it. Only when named: a bare `attack`
+        # never starts a grudge by accident.
+        wanted = discovery.words(target)
+        npc = next((a for a in room.actors
+                    if not a.hostile and wanted & discovery.words(a.name)), None)
+        if npc is not None:
+            self._resolved = True
+            dealings.bump(self.store, npc.id, dealings.ATTACK_STEP)
+            self._following.discard(npc.id)
+            yield from self._says(npc, "They step back from you, and do not come closer.")
+            yield Line(f"{_cap(npc.name)} will remember that.", style="alert")
+            return
+
         hostiles = [a for a in room.actors if a.hostile and a.hp > 0]
         if not hostiles:
             yield Notice("There is nothing here to fight.")
@@ -779,7 +967,10 @@ class Engine:
         room = self.state.room
         hostiles = [a for a in room.actors if a.hostile and a.hp > 0]
         if hostiles:
-            yield from actors_attack(hostiles, self.state.player, self.state.rng)
+            if HIDDEN in self.state.player.effects:
+                yield Line("They don't find you.", style="dim")
+            else:
+                yield from actors_attack(hostiles, self.state.player, self.state.rng)
 
         yield from self._tick_effects()
 
@@ -788,14 +979,23 @@ class Engine:
             yield from self._die(killer)
 
     def _tick_effects(self) -> Iterator[Event]:
+        """Count effects down, and report only when one *ends*.
+
+        It used to report every tick, so a status applied this turn printed
+        twice -- once when applied, once when ticked. The playtest's "[braced]"
+        line appeared twice for exactly that reason.
+        """
         effects = self.state.player.effects
         if not effects:
             return
+        expired = False
         for name in list(effects):
             effects[name] -= 1
             if effects[name] <= 0:
                 del effects[name]
-        yield self._status()
+                expired = True
+        if expired:
+            yield self._status()
 
     def _die(self, cause: str) -> Iterator[Event]:
         epitaph = ""
@@ -841,6 +1041,10 @@ class Engine:
             parts.append("items: " + ", ".join(i.name for i in room.items))
         if room.actors:
             parts.append("present: " + ", ".join(a.name for a in room.actors))
+        if not any(a.hostile and a.hp > 0 for a in room.actors):
+            # Said outright (M11). Left unsaid, the judge invented an enemy for
+            # "jump" and "hide" in an empty room and ruled on it.
+            parts.append("nothing hostile is here")
         parts.append("exits: " + ", ".join(d.value for d in room.exits))
         return ". ".join(parts)
 

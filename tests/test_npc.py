@@ -113,11 +113,15 @@ def game(tmp_path, theme):
 
 
 def test_you_cannot_attack_the_archivist(game):
-    engine, state, _, _ = game
+    """Still true: an NPC is never rolled against and never hurt. Since M11 the
+    attempt is no longer free, though -- it is the wary band's only door."""
+    from simulacra.engine import dealings
+
+    engine, state, store, _ = game
     events = list(engine.turn("attack archivist"))
-    assert any(isinstance(e, Notice) for e in events)
     assert not any(isinstance(e, Roll) for e in events)
     assert all(a.hp > 0 for a in state.room.actors)
+    assert dealings.is_wary(store, "npc:archivist")
 
 
 def test_entering_the_room_announces_them_as_a_person_not_a_threat(game):

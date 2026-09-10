@@ -22,6 +22,18 @@ BARE_HANDS = 2
 CRIT = 20
 FUMBLE = 1
 
+# Player statuses combat reads (M11). Before this the only status in the game was
+# "braced", and nothing anywhere read it -- it counted down and displayed.
+SHAKEN = "shaken"          # the judge's (you, hinder): your footing is gone
+HIDDEN = "hidden"          # the `hide` verb: out of sight
+SHAKEN_PENALTY = 2         # defense, while shaken
+HIDDEN_BONUS = 2           # to hit, on the attack that ends hiding
+HIDE_DIFFICULTY = 12
+
+
+def player_defense(player: Player) -> int:
+    return player.defense - (SHAKEN_PENALTY if SHAKEN in player.effects else 0)
+
 
 def best_weapon(player: Player) -> Item | None:
     """Only carried items count -- we never scan the room."""
@@ -53,10 +65,15 @@ def player_attacks(player: Player, target: Actor, rng: random.Random) -> list[Ev
     weapon = best_weapon(player)
     base = weapon.damage if weapon else BARE_HANDS
 
-    total, hit = attack_roll(player.attack, target.defense, rng)
+    # Striking from hiding is the point of hiding -- and it ends it.
+    ambush = player.effects.pop(HIDDEN, None) is not None
+    bonus = player.attack + (HIDDEN_BONUS if ambush else 0)
+
+    total, hit = attack_roll(bonus, target.defense, rng)
+    detail = f"with {weapon.name}" if weapon else "bare-handed"
     events.append(Roll(
         label="attack", total=total, target=target.defense, success=hit,
-        detail=f"with {weapon.name}" if weapon else "bare-handed",
+        detail=detail + (" from hiding" if ambush else ""),
     ))
     if not hit:
         return events
@@ -70,13 +87,16 @@ def player_attacks(player: Player, target: Actor, rng: random.Random) -> list[Ev
 def actors_attack(actors: list[Actor], player: Player, rng: random.Random) -> list[Event]:
     """Runs after the player's action, and only for hostiles still standing."""
     events: list[Event] = []
+    if HIDDEN in player.effects:
+        return events
+    defense = player_defense(player)
     for actor in actors:
         if not actor.hostile or actor.hp <= 0:
             continue
-        total, hit = attack_roll(actor.attack, player.defense, rng)
+        total, hit = attack_roll(actor.attack, defense, rng)
         events.append(Roll(
             label=f"{actor.name} attacks", total=total,
-            target=player.defense, success=hit,
+            target=defense, success=hit,
         ))
         if not hit:
             continue

@@ -145,13 +145,24 @@ def adjudicate(action: str, room_summary: str, theme, client, policy) -> Verdict
 
 def apply_verdict(verdict: Verdict, state, rng: random.Random) -> list[Event]:
     """Roll against the difficulty, clamp, apply, return Events."""
-    from .combat import attack_roll  # local: combat imports nothing from here
+    from .combat import SHAKEN, attack_roll  # local: combat imports nothing from here
 
     action_text = getattr(state, "_last_action", "")
     if not verdict.plausible:
         return [Improvised(action=action_text, plausible=False, reason=verdict.reason)]
 
     player: Player = state.player
+    room = state.room
+    hostiles = [a for a in room.actors if a.hostile and a.hp > 0]
+
+    # M11. A verdict aimed at an enemy in a room with none used to roll, report
+    # a hit, and then silently apply nothing -- the playtest got "jumping over
+    # the edge causes the enemy to stumble" in an empty room. No target means
+    # no roll, and the model's reason, which invented the target, is not shown.
+    if verdict.effect in ("damage_target", "status_target") and not hostiles:
+        return [Improvised(action=action_text, plausible=False,
+                           reason="There is nothing here for that to act on.")]
+
     events: list[Event] = [
         Improvised(action=action_text, plausible=True, reason=verdict.reason)
     ]
@@ -162,8 +173,6 @@ def apply_verdict(verdict: Verdict, state, rng: random.Random) -> list[Event]:
     if not success:
         return events
 
-    room = state.room
-    hostiles = [a for a in room.actors if a.hostile and a.hp > 0]
     amount = verdict.magnitude
 
     match verdict.effect:
@@ -183,7 +192,10 @@ def apply_verdict(verdict: Verdict, state, rng: random.Random) -> list[Event]:
             # Modelled as a defense penalty rather than a new subsystem.
             hostiles[0].defense = max(5, hostiles[0].defense - max(1, amount))
         case "status_self":
-            player.effects["braced"] = max(1, amount)
+            # (you, hinder): the action cost you your footing. This was labelled
+            # "braced" -- a buff's name on a penalty -- and nothing read it. It
+            # is now called what it is, and combat reads it (M11).
+            player.effects[SHAKEN] = max(1, amount)
             events.append(StatusChanged(hp=player.hp, max_hp=player.max_hp,
                                         depth=state.depth, effects=tuple(player.effects)))
         case _:

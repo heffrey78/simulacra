@@ -67,6 +67,7 @@ def persist_floor(store, floor: Floor, run_id: int) -> None:
     store.upsert_node(
         floor_node, "floor", floor.theme_name or f"floor {floor.depth}",
         {
+            **store.node_data(floor_node),
             "depth": floor.depth,
             "theme_name": floor.theme_name,
             "goal": floor.goal,
@@ -77,9 +78,18 @@ def persist_floor(store, floor: Floor, run_id: int) -> None:
     store.link(run_node, "ENTERED", floor_node, run_id=run_id)
 
     for room in floor.rooms.values():
+        node = f"room:{room.id}"
         store.upsert_node(
-            f"room:{room.id}", "room", room.name,
-            {"kind": room.kind.value, "depth": room.depth, "concept": room.concept},
+            node, "room", room.name,
+            # Merged, not replaced (M11). Other systems keep state on room nodes
+            # -- M10's `found` index lives here -- and rewriting the blob on
+            # every run erased it, so a discovery could be replayed only in the
+            # run that made it and the next run re-discovered it as something
+            # new. Found by replaying the 2026-09-10 playtest against its own
+            # world; the M10 test that should have caught it never called
+            # begin() on run 2.
+            {**store.node_data(node), "kind": room.kind.value,
+             "depth": room.depth, "concept": room.concept},
             run_id=run_id,
         )
         store.link(floor_node, "CONTAINS", f"room:{room.id}")
