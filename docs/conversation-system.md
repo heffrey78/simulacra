@@ -1,5 +1,14 @@
 # The conversation system
 
+> **Superseded by M8.** This describes the single-channel system as it stood
+> after T1: one embedding per question, one unconditional recite instruction,
+> and no within-conversation state. All three are gone —
+> [routes](tasks/M8-routes-tasks.md) replaced the channel, the instruction is
+> now per-route, and a refusal is spoken without a model call at all. Kept
+> because the analysis below is what produced that design, and because the
+> transcript it dissects (eight questions, one fact, eight phrasings) is the
+> "before" that M8 is measured against.
+
 How `talk`/`talk to`/`speak`/`ask` — the four aliases that reach `_talk()` —
 find an NPC, what they know, and why. Written up
 while investigating conversation quality ahead of the POC closeout

@@ -391,7 +391,42 @@ and discoveries, the same model started accumulating: *"entries for three
 delvers who died on floor 1"* at run 3, *"six delvers killed on floor 1"* at run
 5. It began counting, which is the Archivist's authored role.
 
-**M8+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
+**M8 — Routes + session** ✅ *done* · **[task record →](../tasks/M8-routes-tasks.md)**
+Conversation stops having one retrieval channel. The player's topic classifies
+into a named route — `self`, `room`, `monsters`, `npc`, `item`, `past` — and
+each has its own resolver, of which **only `past` embeds anything**. You do not
+run a 768-dimension nearest-neighbour search to find out what is in the room;
+the engine already knows. Classification is two-stage like the parser, and
+measured at **90–100% stage-1 hits** over ten varied questions, so the common
+case stays tier 0.
+
+A conversation session tracks which *facts* have been spoken, by key, so a
+repeated question is answered "I have told you" in code rather than hoping a
+1.7b notices. And the parser finally got a topic slot, which deleted
+`_topic_of()`'s three ordered stopword passes from the talk handler.
+
+**The finding that changed the design: a refusal cannot be a prompt.** Told "say
+you do not know", `qwen3:1.7b` invents an answer — asked about the Corrector, a
+person, it explained that the Corrector is "a device used to alter records".
+Stripping every other fact out of the prompt did not help; it invented from the
+question. So a route that resolves to nothing is now **spoken verbatim from the
+theme pack with no model call**, which is §7's *the LLM proposes, code disposes*
+arriving in conversation — and makes saying nothing free. Generalising: an
+instruction whose whole purpose is to suppress output is the weakest possible
+use of a small model.
+
+Also fixed: the echo guard rejected dialogue that relayed its own prompt facts,
+because it was written in M2 for a room census — data to *transform*, not
+*relay*. Second milestone running where a guard built for one caller silently
+failed a new one.
+
+| | before (conversation-system.md) | after |
+|---|---|---|
+| eight questions | one fact, eight phrasings | ten questions, ten answers, five sources |
+| turns that embed | every one | 3 of 10 |
+| refusal / repeat turns | invented an answer | 0.0 s, no model call |
+
+**M9+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
 The POC's conversation work stalled for a structural reason, not a tuning one:
 the memory system has exactly one class of content in it (deaths), the graph is
 written and never read, and the parser's single `target` slot forces an ad-hoc

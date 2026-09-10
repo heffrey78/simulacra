@@ -11,7 +11,9 @@ from __future__ import annotations
 import pytest
 
 from simulacra.config import Settings
-from simulacra.engine.loop import DEATH_QUERY, Engine, _topic_of
+from simulacra.engine.loop import Engine
+from simulacra.engine.parser import split_address
+from simulacra.engine.routes import DEATH_QUERY
 from simulacra.engine.state import new_run
 from simulacra.memory.store import Store
 from simulacra.narrate.narrator import Narrator
@@ -22,7 +24,7 @@ ARCHIVIST = "npc:archivist"
 
 
 class EmbedRecording(FakeClient):
-    """Captures what was embedded. Engine only embeds in `_recall_for`."""
+    """Captures what was embedded. Only the `past` route embeds anything."""
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -61,19 +63,22 @@ def talk(store, theme, command: str) -> EmbedRecording:
 
 # -- the split itself ------------------------------------------------------
 
-@pytest.mark.parametrize("target,expected", [
-    ("archivist about arm", "arm"),
-    ("to archivist", ""),
-    ("archivist", ""),
-    ("", ""),
+@pytest.mark.parametrize("target,addressee,topic", [
+    ("archivist about arm", "archivist", "arm"),
+    ("to archivist", "archivist", ""),
+    ("archivist", "archivist", ""),
+    ("", "", ""),
     # "about <npc>" is a real topic -- asking them about themselves.
-    ("about archivist", "archivist"),
-    # Only the head is stripped, or this loses its subject.
-    ("archivist about archivist ledger", "archivist ledger"),
-    ("about brother", "brother"),
+    ("about archivist", "", "archivist"),
+    # Split at the *first* connective, so the subject survives.
+    ("archivist about archivist ledger", "archivist", "archivist ledger"),
+    ("about brother", "", "brother"),
 ])
-def test_topic_of_separates_address_from_subject(target, expected):
-    assert _topic_of(target, "the Archivist") == expected
+def test_the_parser_separates_address_from_subject(target, addressee, topic):
+    """M8 moved this out of the talk handler: splitting a line is syntax, and
+    doing it with three ordered stopword passes inside a verb handler meant
+    every new social verb needed another pass."""
+    assert split_address("talk", target) == (addressee, topic)
 
 
 # -- through the engine ----------------------------------------------------

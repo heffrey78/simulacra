@@ -348,11 +348,18 @@ def test_a_transcribed_prompt_never_reaches_the_player(talking):
     assert not looks_like_echo("Two hundred and nine went down, and I counted each.", prompt)
 
 
-def test_an_npc_with_nothing_at_all_still_gets_the_cold_start_line(talking):
+def test_an_npc_with_nothing_at_all_says_so(talking):
+    """M8 replaced the single "you remember nothing" line with a per-route
+    refusal that is *spoken*, not generated -- so there is no prompt to assert
+    on, which is the point."""
+    from simulacra.engine.events import ProseDelta
+    from simulacra.engine.routes import DEFAULT_REFUSAL
+
     engine, state, store, client, npc = talking
     store.retire_canon(npc.anchor)
-    list(engine.turn("talk to archivist"))
-    assert "You remember nothing about this delver" in prompt_text(client)
+    said = "".join(e.text for e in engine.turn("ask archivist about anyone else")
+                   if isinstance(e, ProseDelta))
+    assert said == (npc.refusal or DEFAULT_REFUSAL)
 
 
 def test_the_prompt_stays_inside_the_tier_two_budget(talking):
@@ -391,8 +398,11 @@ def test_hearsay_is_labelled_as_hearsay_in_the_prompt(talking):
     store.add_canon(npc.anchor, "the vault is empty", "told", confidence=0.5)
     list(engine.turn("talk to archivist"))
     text = prompt_text(client)
-    assert "may have been lying" in text
-    assert "say who told you" in text
+    assert "which may be false" in text
+    # M8 moved attribution into the fact itself: M7 measured the rider ("say
+    # who told you") being ignored most of the time, and data the model reads
+    # back is obeyed where an instruction is not.
+    assert "A delver told you: the vault is empty" in text
 
 
 def test_hearsay_is_capped(talking):

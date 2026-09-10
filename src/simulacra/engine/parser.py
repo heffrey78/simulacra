@@ -36,6 +36,8 @@ INTENT_SCHEMA = {
 class Intent:
     verb: Verb | Literal["improvise"]
     target: str = ""
+    # Who is being spoken to, for `talk` and `tell`. Empty for every other verb.
+    addressee: str = ""
     raw: str = ""
     # True when stage 2 ran, i.e. this turn cost an LLM round trip.
     inferred: bool = False
@@ -72,6 +74,48 @@ _ALIASES_BY_LENGTH: list[tuple[str, str]] = sorted(
 )
 
 _ARTICLES = frozenset({"the", "a", "an"})
+
+# Verbs whose target is really two things: who is being spoken to, and what
+# about. Splitting them is syntax, so it belongs here -- before M8 it happened
+# in `_topic_of()` inside the talk handler, three ordered stopword passes deep,
+# and every new social verb needed another pass.
+_ADDRESSED = frozenset({"talk", "tell"})
+
+# Sit on opposite sides of the name: "to archivist" is pure address, while
+# "about archivist" is a topic that happens to be the NPC.
+_ADDRESS_WORDS = frozenset({"to", "with", "at"})
+_TOPIC_WORDS = frozenset({"about", "for", "on", "regarding", "re"})
+
+
+def split_address(verb: str, target: str) -> tuple[str, str]:
+    """(addressee, topic) for a social verb; ("", target) for anything else.
+
+    Connectives only. Deciding *which* NPC is a resolution problem that needs
+    the room's occupants, which the parser has no business knowing -- so the
+    engine still matches this phrase against who is actually present.
+
+    `tell` has no connective to split on, so the addressee is the leading token.
+    That is right for every name in the theme pack and wrong for a multi-word
+    one; the engine's name-aware match is the backstop, so a miss degrades to
+    "which of them?" rather than to the wrong NPC.
+    """
+    if verb not in _ADDRESSED or not target:
+        return "", target
+
+    words = target.split()
+    while words and words[0] in _ADDRESS_WORDS:
+        words.pop(0)
+    if not words:
+        return "", ""
+
+    for i, w in enumerate(words):
+        if w in _TOPIC_WORDS:
+            return " ".join(words[:i]), " ".join(words[i + 1 :])
+
+    if verb == "tell":
+        return words[0], " ".join(words[1:])
+    # `talk`/`ask` with no connective: the whole thing is who, not what.
+    return " ".join(words), ""
 
 # Verbs that never take a target. Trailing words after these are ignored rather
 # than treated as a parse failure.
@@ -133,7 +177,8 @@ def parse(text: str) -> Intent | None:
         if verb == "look" and target in _LOOK_FILLERS:
             target = ""
 
-        return Intent(verb=verb, target=target, raw=raw)
+        addressee, target = split_address(verb, target)
+        return Intent(verb=verb, target=target, addressee=addressee, raw=raw)
 
     return None
 
@@ -176,9 +221,12 @@ def infer(text: str, room_summary: str, client, policy) -> Intent:
     if verb in ("take", "use") and target and target not in _normalise(text):
         verb = "improvise"
 
+    target = target if verb != "improvise" else _normalise(text)
+    addressee, target = split_address(verb, target)
     return Intent(
         verb=verb,  # type: ignore[arg-type]
-        target=target if verb != "improvise" else _normalise(text),
+        target=target,
+        addressee=addressee,
         raw=_normalise(text),
         inferred=True,
     )

@@ -223,6 +223,9 @@ class Recollection:
     depth: int
     distance: float
     via: str  # "semantic" | "graph" | "both"
+    # Carried so the conversation session can dedupe on *which fact* rather than
+    # on phrasing. `recall` already selects `m.*`; this row was always here.
+    id: int = 0
 
     @property
     def age_runs(self) -> int:
@@ -638,7 +641,7 @@ class Store:
 
             return [
                 Recollection(
-                    text=r["text"], kind=r["kind"], run_id=r["run_id"],
+                    text=r["text"], id=int(r["id"]), kind=r["kind"], run_id=r["run_id"],
                     depth=r["depth"], distance=float(r["distance"] or 0.0), via=via,
                 )
                 for r in rows

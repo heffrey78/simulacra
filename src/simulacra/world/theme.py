@@ -31,6 +31,15 @@ class Npc:
     # way it was not -- but not without limit.
     depth: int = 1
 
+    # What this NPC says when it has nothing, and when it has already said it.
+    # These are spoken *without a model call* -- see routes.Brief.spoken. A 1.7b
+    # told "you do not know anything about that" invents an answer anyway
+    # (measured: the Archivist explained that the Corrector is "a device used to
+    # alter records"), so refusing is code's job and only the wording is the
+    # theme's. Blank falls back to the engine default.
+    refusal: str = ""
+    repeat: str = ""
+
     # Seed canon: `provenance='authored'`. The one class of canon that is never
     # generated and never mutated, and the only input (with episodic memory)
     # that derived canon is allowed to be built from.
@@ -98,6 +107,7 @@ class Theme:
                 Npc(
                     anchor=n["anchor"], name=n["name"], role=n["role"], voice=n["voice"],
                     depth=int(n.get("depth", 1)),
+                    refusal=n.get("refusal", ""), repeat=n.get("repeat", ""),
                     canon=tuple(n.get("canon", ())),
                 )
                 for n in d.get("npcs", {}).get("roster", [])

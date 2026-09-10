@@ -59,13 +59,26 @@ def _norm(text: str) -> str:
     return _WS.sub(" ", text.lower()).strip()
 
 
-def looks_like_echo(text: str, census: str) -> bool:
-    """True when the model transcribed its prompt instead of narrating."""
+def looks_like_echo(text: str, census: str, *, verbatim: bool = True) -> bool:
+    """True when the model transcribed its prompt instead of narrating.
+
+    `verbatim=False` for dialogue. The substring test assumes the prompt is data
+    the model should *transform* -- true of a room census, which is why it was
+    written that way in M2. It is false of a route's facts, which an NPC is
+    being asked to *relay*: "There is a smudged figure west of here" appearing
+    in both prompt and reply is the system working. Measured live as an NPC
+    answering a question about its own room with "They say nothing."
+
+    The label test still applies either way: a prompt label in the output is
+    transcription under any reading.
+    """
     t = _norm(text)
     if not t:
         return True
     if any(label in t for label in _CENSUS_LABELS):
         return True
+    if not verbatim:
+        return False
     # A prefix that appears verbatim in the census is a copy, not a description.
     return len(t) >= 12 and t in _norm(census)
 
@@ -321,18 +334,22 @@ class Narrator:
             else:
                 yield f"Nothing more to notice about {name}."
 
-    def npc(self, npc, player_line: str, recollections: list,
-            canon: list | None = None, told: list | None = None) -> Iterator[str]:
-        """Stream NPC speech, conditioned on what this NPC actually remembers.
+    def npc(self, npc, player_line: str, brief) -> Iterator[str]:
+        """Stream NPC speech from a route's `Brief`.
 
-        `recollections` come from Store.recall(about=npc.anchor, ...) -- prior
-        runs only. Two or three, quoted verbatim into the prompt. This is the
-        cheapest possible continuity: a handful of tokens buys an NPC that knows
-        you died on floor four last time.
+        The brief carries what was retrieved *and* what to do with it, because
+        those two decisions belong together -- M4's unconditional "say what
+        happened to the delver you remember" was correct for the only route that
+        existed, and became a bug the moment a second kind of question could be
+        asked. See `engine/routes.py`.
 
-        Quoted, never summarised: the specificity is the whole effect. And never
-        cached -- a conversation that replays word for word is worse than one
-        that costs six seconds.
+        Order follows what M4 measured: a small model attends hardest to the end
+        of its prompt. Standing context first -- what this NPC is, then what it
+        was told -- then the route's own facts, then the instruction, then the
+        player's line last so it is the thing being answered.
+
+        Never cached: a conversation that replays word for word is worse than
+        one that costs six seconds.
         """
         system = (
             f"You are {npc.name}. {npc.role}. {npc.voice} "
@@ -342,46 +359,24 @@ class Narrator:
         if note := self._theme.style_note(motifs=False):
             system += " " + note
 
-        # Order is load-bearing, and follows what M4 measured: a small model
-        # attends hardest to the end of its prompt. So standing context first --
-        # what this NPC *is*, then what it was told -- and episodic recall last,
-        # where `_recall_for` has already sorted the death to the very end.
-        #
-        # Canon and recollections are separate labelled sections on purpose. The
-        # model has to be able to tell "what I am" from "what I saw happen to
-        # someone else"; merging them is how M4's prompt ended up instructing an
-        # NPC to recite a death regardless of what it was asked.
-        parts = []
-        if canon:
+        parts: list[str] = []
+        if brief.canon:
             parts.append("What is true of you:")
-            parts.extend(f"- {c}" for c in canon)
-        if told:
-            parts.append("A delver once told you, and may have been lying:")
-            parts.extend(f"- {t}" for t in told)
-            parts.append("If you repeat any of that, say who told you.")
+            parts.extend(f"- {c}" for c in brief.canon)
+        if brief.told:
+            # Attribution sits in the fact rather than in a rider. M7 measured
+            # the rider ("say who told you") being ignored most of the time;
+            # data the model reads back is obeyed where an instruction is not.
+            parts.append("Things delvers have claimed to you, which may be false:")
+            parts.extend(f"- {t}" for t in brief.told)
+        if brief.facts:
+            if brief.label:
+                parts.append(brief.label)
+            parts.extend(f"- {f.text}" for f in brief.facts)
 
-        if recollections:
-            parts.append("You remember, from earlier delvers:")
-            parts.extend(f"- {r.text}" for r in recollections)
-            # "Refer to what you remember" produced a one-word reply from a
-            # terse-voiced NPC that had the memory sitting in its prompt. The
-            # instruction has to name the thing to say, not gesture at it.
-            parts.append(
-                "Say out loud what happened to the delver you remember, including "
-                "the floor and what killed them. Do not invent any other history."
-            )
-        elif canon:
-            # There must always be an instruction. Dropping this branch left a
-            # prompt that was nothing but data and the player's line, and a 1.7b
-            # handed no instruction transcribes the last thing it was given --
-            # measured live as "They say nothing." once the guard caught it.
-            parts.append("Answer them from what is true of you. Do not invent history.")
-        else:
-            # Only when the NPC has nothing at all. An NPC with canon can speak
-            # from what it is, and telling it that it remembers nothing is how
-            # you get a character who refuses to say anything about itself.
-            parts.append("You remember nothing about this delver. Do not pretend to.")
-
+        # Every branch carries one. A prompt of pure data makes a 1.7b
+        # transcribe the last thing it was handed -- measured live in M7.
+        parts.append(brief.instruction)
         parts.append(f"The delver says: {player_line or 'nothing; they simply approach.'}")
         user = "\n".join(parts)
 
@@ -402,7 +397,7 @@ class Narrator:
                 head = "".join(buffer)
                 if len(head) >= GUARD_PREFIX_CHARS:
                     # Dialogue is not immune to the failures room prose had.
-                    if looks_like_echo(head, user) or looks_degenerate(head):
+                    if looks_like_echo(head, user, verbatim=False) or looks_degenerate(head):
                         gen.close()
                         buffer.clear()
                         break
@@ -413,7 +408,7 @@ class Narrator:
 
         if not released:
             text = "".join(buffer).strip()
-            bad = not text or looks_like_echo(text, user) or looks_degenerate(text)
+            bad = not text or looks_like_echo(text, user, verbatim=False) or looks_degenerate(text)
             yield "They say nothing." if bad else text
 
     def epitaph(self, cause: str, depth: int, turns: int) -> str:

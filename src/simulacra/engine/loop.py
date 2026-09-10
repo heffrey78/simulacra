@@ -16,6 +16,7 @@ MILESTONE M1 (movement) -> M3 (combat) -> M4 (memory).
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 
 from ..world.director import direct_floor
 from ..world.floorgen import floor_rng, generate_floor
@@ -38,7 +39,8 @@ from .events import (
 )
 from .combat import actors_attack, clear_dead, player_attacks
 from .judge import adjudicate, apply_verdict
-from .parser import infer, parse
+from .parser import _ADDRESS_WORDS, _TOPIC_WORDS, infer, parse
+from .routes import Router
 from .state import load_floor_identity, persist_floor, place_npcs
 
 # Read-side caps on canon. The write side caps too (an NPC accumulates canon
@@ -54,23 +56,9 @@ TOLD_LIMIT = 2
 TOLD_CAP = 3
 TOLD_CONFIDENCE = 0.5
 
-# Two or three recollections, never more. Prompt bloat is real at 4096 context,
-# and a small model handed six memories recites a list instead of speaking.
-RECALL_LIMIT = 3
-
-# What an NPC reaches for when the player gives it nothing to go on. Phrased
-# about outcomes, not conversations: "who spoke with X" ranked the NPC's own
-# past conversations above an actual death, because those memories are
-# literally about speaking.
-DEATH_QUERY = "How did the previous delver die, and on which floor?"
-
-# "talk to archivist" and "ask archivist about the arm" arrive at _talk() as
-# one string, verb stripped -- address and topic together. Splitting them takes
-# two passes because the two kinds of connective sit on opposite sides of the
-# name: "to archivist" is pure address (topic: nothing), while "about
-# archivist" is a topic that happens to be the NPC.
-_ADDRESS_WORDS = frozenset({"to", "with", "at"})
-_TOPIC_WORDS = frozenset({"about", "for", "on", "regarding", "re"})
+# M8 moved recall limits, DEATH_QUERY and the topic split out of this module:
+# limits and the query live beside the resolver that uses them (`routes.py`),
+# and the address/topic split is syntax, so it lives in the parser.
 
 # M1 placeholder prose, one line per structural role. Deliberately flat: this is
 # the text the narrator replaces in M2, and it should be obvious that it is a
@@ -86,7 +74,8 @@ _KIND_BLURB = {
 }
 
 
-# Words that are never part of who is being addressed.
+# Words that are never part of who is being addressed. The connective sets come
+# from the parser, which is where the address/topic split now happens.
 _NAME_NOISE = frozenset({"the", "a", "an"}) | _ADDRESS_WORDS | _TOPIC_WORDS
 
 
@@ -115,20 +104,24 @@ def _addressed(target: str, npcs: list):
     return None
 
 
-def _topic_of(target: str, npc_name: str) -> str:
-    """The part of what the player typed that is a subject, not an address.
+@dataclass
+class Conversation:
+    """What has already been said to this NPC, this run.
 
-    Three passes, in order, each only at the head of the string: address words,
-    the NPC's own name, topic words. Order is what separates "to archivist"
-    (nothing asked) from "about archivist" (asked about themselves), and only
-    stripping at the head keeps "ask archivist about the archivist's ledger"
-    from losing its subject.
+    `surfaced` is why this is not a text window. Tracking *which facts* were
+    spoken, by key, means "I've already told you that" is decided in code
+    instead of being asked of a 1.7b that has no memory of the previous turn.
     """
-    words = target.lower().split()
-    for stopset in (_ADDRESS_WORDS, set(npc_name.lower().split()), _TOPIC_WORDS):
-        while words and words[0] in stopset:
-            words.pop(0)
-    return " ".join(words)
+
+    npc_id: str
+    exchanges: list[tuple[str, str]] = field(default_factory=list)
+    surfaced: set[str] = field(default_factory=set)
+    # Topics actually asked, normalised. Suppression needs *both* -- the same
+    # question again, and nothing new to say -- because the `past` route
+    # collapses many different topics onto one small set of memories, so
+    # facts-alone stonewalled questions the player had never asked. Measured
+    # live: "ask about the seams in the wall" answered "It is already entered."
+    asked: set[str] = field(default_factory=set)
 
 
 class Engine:
@@ -155,6 +148,14 @@ class Engine:
         # action provokes the monsters.
         self._resolved = False
         self._last_action = ""
+
+        self._router = Router(theme, store, settings, client=client)
+        # Conversation state, per NPC, per run. **Never reaches `Store`**, is
+        # never embedded, and dies with the process. That constraint is the
+        # whole reason this is safe: M4's self-quotation bug happened because a
+        # reply reached *persistent* memory, and a same-run scratch buffer
+        # cannot reproduce it.
+        self._conversations: dict[str, Conversation] = {}
 
     # -- public ------------------------------------------------------------
 
@@ -213,9 +214,9 @@ class Engine:
             case "improvise":
                 yield from self._improvise(intent.raw or text)
             case "talk":
-                yield from self._talk(intent.target)
+                yield from self._talk(intent.addressee, intent.target, intent.raw)
             case "tell":
-                yield from self._tell(intent.target)
+                yield from self._tell(intent.addressee, intent.target, intent.raw)
             case _:
                 yield Notice("I don't understand.")
 
@@ -399,9 +400,13 @@ class Engine:
 
     # -- talking -----------------------------------------------------------
 
-    def _talk(self, target: str) -> Iterator[Event]:
-        room = self.state.room
-        npcs = [a for a in room.actors if not a.hostile]
+    def _talk(self, addressee: str, topic: str, line: str) -> Iterator[Event]:
+        """One dialogue turn: who, then what about, then what they are told.
+
+        The retrieval decision belongs to `routes.Router` and the phrasing to
+        the narrator; this only resolves *which* NPC and keeps the session.
+        """
+        npcs = [a for a in self.state.room.actors if not a.hostile]
         if not npcs:
             yield Notice("There is no one here to talk to.")
             return
@@ -409,7 +414,7 @@ class Engine:
             yield Notice("They have nothing to say.")
             return
 
-        actor = _addressed(target, npcs)
+        actor = _addressed(addressee or topic, npcs)
         if actor is None:
             yield Notice("Which of them? " + ", ".join(a.name for a in npcs) + ".")
             return
@@ -419,23 +424,51 @@ class Engine:
             yield Notice("They have nothing to say.")
             return
 
-        recollections = self._recall_for(actor.id, _topic_of(target, actor.name))
-        actor.recollections = [r.text for r in recollections]
-        canon = self._canon_for(actor.id)
-        told = self._told_to(actor.id)
+        talk = self._conversations.setdefault(actor.id, Conversation(npc_id=actor.id))
+        key = topic.strip().lower()
+        brief = self._router.brief(
+            self.state, actor, topic,
+            # A repeat is a repeated *question* that has nothing new behind it.
+            # The same fact in answer to a new question is fine; the player
+            # asked something else and deserves an answer.
+            surfaced=talk.surfaced if key in talk.asked else None,
+        )
+        talk.asked.add(key)
+        actor.recollections = [f.text for f in brief.facts]
 
         # Talking is a resolved action, so anything hostile in the room gets its
         # turn. Conversation in a monster's presence is a choice with a price.
         self._resolved = True
 
-        yield NpcPresent(npc_id=actor.id, name=actor.name,
-                         remembers=bool(recollections))
+        # "(remembers you)" means a prior *run* surfaced, which is only ever the
+        # `past` route. Authored canon is what the NPC is, not what it recalls
+        # about this delver, and counting it would light the tag on turn one of
+        # a brand new world.
+        yield NpcPresent(
+            npc_id=actor.id, name=actor.name,
+            remembers=any(f.key.startswith("memory:") for f in brief.facts),
+        )
         yield ProseStart(channel="npc", speaker=actor.name)
         spoken: list[str] = []
-        for piece in self.narrator.npc(persona, target, recollections, canon, told):
-            spoken.append(piece)
-            yield ProseDelta(piece)
+        if brief.spoken:
+            # No model call: a refusal a 1.7b invents its way around is not a
+            # refusal. See routes.DEFAULT_REFUSAL.
+            spoken.append(brief.spoken)
+            yield ProseDelta(brief.spoken)
+        else:
+            for piece in self.narrator.npc(persona, line, brief):
+                spoken.append(piece)
+                yield ProseDelta(piece)
         yield ProseEnd()
+
+        said = "".join(spoken).strip()
+        if said and said != "They say nothing.":
+            # Only once the reply actually happened. The echo and degeneracy
+            # guards can swallow a whole generation, and a fact marked as said
+            # after the NPC said nothing is one the player can never hear.
+            talk.surfaced.update(brief.keys)
+            talk.exchanges.append((topic, said))
+            del talk.exchanges[:-2]
 
         self.store.upsert_node(actor.id, "npc", actor.name, run_id=self.state.run_id)
         self.state.met_npcs.add(actor.id)
@@ -444,58 +477,36 @@ class Engine:
         # *delver* brought, never the NPC's own reply. Storing the reply feeds
         # an NPC its own words on the next run, and the loop compounds: three
         # runs in, recall was two self-quotations crowding out an actual death.
-        asked = (target or self._last_action).strip()
+        asked = (topic or addressee or self._last_action).strip()
         yield Transcript(
             summary=(f"A delver approached {actor.name} on floor {self.state.depth}"
                      + (f" and asked about {asked}." if asked else ".")),
             kind="dialogue",
             subjects=(actor.id, f"room:{self.state.room_id}"),
-            tags=("dialogue",),
+            tags=("dialogue", brief.route),
         )
 
-    def _canon_for(self, anchor: str) -> list[str]:
-        """What this NPC *is*: the `self` route's resolver, arriving early.
-
-        Needs no classification to be useful, which is why it lands in M7 while
-        the rest of the routes wait for M8. Authored and derived only -- `told`
-        is fetched separately because the prompt has to label it as hearsay.
-        """
-        try:
-            rows = self.store.canon(
-                anchor, provenance=("authored", "derived"), limit=CANON_LIMIT
-            )
-        except Exception:
-            return []
-        return [r["text"] for r in rows]
-
-    def _told_to(self, anchor: str) -> list[str]:
-        try:
-            rows = self.store.canon(anchor, provenance="told", limit=TOLD_LIMIT)
-        except Exception:
-            return []
-        return [r["text"] for r in rows]
-
-    def _tell(self, target: str) -> Iterator[Event]:
+    def _tell(self, addressee: str, claim: str, line: str) -> Iterator[Event]:
         """The player asserts something. It becomes hearsay, and may be false.
 
         This is the narrow, safe half of "NPCs learn from what players say" --
         the half M4's bug made everyone afraid of. It is safe because it is
         *typed*: the row is `provenance='told'`, it is never promoted to
         `derived` or `observed` by any code path, and the prompt labels it as
-        something a delver claimed rather than something the NPC knows. A lying
-        player produces an NPC that believes something false, which is content.
+        something a delver claimed. A lying player produces an NPC that believes
+        something false, which is content.
         """
         npcs = [a for a in self.state.room.actors if not a.hostile]
         if not npcs:
             yield Notice("There is no one here to tell.")
             return
 
-        actor = _addressed(target, npcs)
+        actor = _addressed(addressee or claim, npcs)
         if actor is None:
             yield Notice("Tell which of them? " + ", ".join(a.name for a in npcs) + ".")
             return
 
-        claim = _topic_of(target, actor.name).strip()
+        claim = claim.strip()
         if not claim:
             yield Notice(f"Tell {actor.name} what?")
             return
@@ -511,41 +522,10 @@ class Engine:
             pass
 
         # Then they answer, with the claim already in their prompt.
-        yield from self._talk(target)
+        yield from self._talk(addressee, claim, line)
 
     def _personas(self) -> dict:
         return {n.anchor: n for n in self.theme.npcs}
-
-    def _recall_for(self, anchor: str, question: str = "") -> list:
-        """Graph-anchored, then semantically ranked. Prior runs only.
-
-        `exclude_run` is not optional: without it an NPC 'remembers' something
-        from four turns ago as though it were a past life.
-
-        `question` is the player's topic, already stripped of the NPC's name by
-        `_topic_of` -- embedding "archivist about the arm" would put the name in
-        every query alike and rank on the noise. Empty means the player named no
-        topic ("talk to archivist"), and an NPC with nothing to go on should
-        volunteer the most important thing it knows, which is DEATH_QUERY.
-        """
-        if self.client is None:
-            return []
-        query = question.strip() or DEATH_QUERY
-        try:
-            embedding = self.client.embed([query], self.settings.embed)[0]
-        except Exception:
-            embedding = None
-        try:
-            found = self.store.recall(
-                embedding=embedding, about=anchor,
-                exclude_run=self.state.run_id, limit=RECALL_LIMIT,
-            )
-        except Exception:
-            return []
-
-        # Deaths last: a small model attends hardest to the end of its prompt,
-        # and a death is the most worth saying out loud.
-        return sorted(found, key=lambda r: r.kind == "death")
 
     # -- consequence -------------------------------------------------------
 

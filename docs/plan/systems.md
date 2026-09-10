@@ -304,6 +304,13 @@ And `unknown` — or any route that resolves to an empty set — *is* the honest
 guard against an embedding outage reading as maximal relevance. The branch T2
 was going to spend a milestone tuning becomes a truth about the data.
 
+**M8 found that the refusal cannot be a prompt at all.** Told "say you do not
+know", a 1.7b invents an answer — even with every other fact stripped out of the
+prompt, it invents from the question. So a route that resolves to nothing is
+spoken verbatim from the theme pack, with no model call: §7's *the LLM proposes,
+code disposes*, arriving in conversation. Saying nothing is now free, which is
+the right price for it.
+
 ### Classification is two-stage, like the parser
 
 Route classification must not put a blocking tier-1 call on every conversation
@@ -450,7 +457,7 @@ floorgen/director throughout: **structure is code's, identity is the model's.**
 |---|---|---|---|
 | **M6** ✅ | Persistent world + reset | S0 — world table, seed split, recompute-and-reattach, `--new-world` / `--forget` | **Met.** Run 2 reached floor 3 with 0 model calls and 0.0 s of wall time |
 | **M7** ✅ | Canon | S1 — `canon` table, provenance, persistent NPC entities, derived-canon refresh | **Met.** The Archivist now counts its dead, grown from deaths rather than authored |
-| **M8** | Routes + session | S2 + S3, and the parser's topic slot | Eight questions, eight answers, one fact said once |
+| **M8** ✅ | Routes + session | S2 + S3, and the parser's topic slot | **Met.** Ten questions, ten answers, from five sources; 90–100% of routes cost nothing |
 | **M9** | Action vocabulary | S4 — trade, gifts, NPC movement, disposition | A gift changes what an NPC will tell you |
 | **M10** | Lazy expansion | S5 — slots, budget, discovery-as-canon | A shelf found on run 1 is still there on run 4 |
 
@@ -461,8 +468,9 @@ alone would read as no improvement.
 
 Task decomposition follows the existing convention — one `docs/tasks/M<n>-*.md`
 per milestone, written before implementation and amended with findings after.
-[M6](../tasks/M6-persistent-world-tasks.md) and
-[M7](../tasks/M7-canon-tasks.md) are **done, with findings**.
+[M6](../tasks/M6-persistent-world-tasks.md),
+[M7](../tasks/M7-canon-tasks.md) and
+[M8](../tasks/M8-routes-tasks.md) are **done, with findings**.
 
 ---
 

@@ -24,7 +24,8 @@ from conftest import FakeClient
         ("get a jar", "take", "jar"), ("grab an offcut", "take", "offcut"),
         # Multi-word verbs beat their single-word prefixes.
         ("pick up lamp", "take", "lamp"),
-        ("talk to the archivist", "talk", "archivist"),
+        # M8: the name is the addressee now, not the topic.
+    ("talk to the archivist", "talk", ""),
         # Intransitives ignore trailing words rather than failing.
         ("look", "look", ""), ("look around", "look", ""), ("l", "look", ""),
         ("look here", "look", ""), ("look about", "look", ""),
