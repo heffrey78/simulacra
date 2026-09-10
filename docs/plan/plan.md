@@ -336,7 +336,34 @@ were scoped in
 **[conversation-improvements-tasks.md →](../tasks/conversation-improvements-tasks.md)**,
 of which T1 shipped and **T2/T3 are superseded by [systems.md](systems.md)**.
 
-**M6+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
+**M6 — Persistent world** ✅ *done* · **[task record →](../tasks/M6-persistent-world-tasks.md)**
+Floors stop being disposable. A `world` table owns the seed and a schema
+version; layout is *recomputed* from `floor_rng(world_seed, depth)` while the
+model's contribution — floor name, goal, motifs, room concepts — is stored in
+the graph and re-attached. `--new-world` archives rather than deletes, and
+`--forget <npc>` retires one NPC's memories without discarding the world.
+
+**The payoff is larger than the milestone claimed.** Two runs through one world,
+floor 1 to floor 3, on this box:
+
+| | tier 3 (director) | tier 2 (prose) | wall to floor 3 |
+|---|---|---|---|
+| run 1, fresh world | 3 calls, 18.7 s avg | 10 calls, 4.9 s avg | **105.6 s** |
+| run 2, same world | **0** | **0** | **0.0 s** |
+
+Run 2 reached floor 3 having spent no model time at all. Stored identity removed
+the director calls, and the prose cache key stabilised on the stored concepts,
+which removed the narration too — so the player now waits once per floor for the
+life of a world instead of once per floor per run.
+
+Two bugs fixed on the way, both found by reviewing seed handling rather than by
+playing. `descend()` generated every floor from `state.rng` — the *dice* stream —
+so how many attacks you rolled on floor 1 decided the shape of floor 2, in direct
+contradiction of the invariant `state.py` documents. And `Store.link()` has
+offered `run_id=None` since M0 without it ever being insertable: `edges` is
+`WITHOUT ROWID`, which makes primary-key columns implicitly `NOT NULL`.
+
+**M7+ — The systems plan** 📋 *designed* · **[systems.md →](systems.md)**
 The POC's conversation work stalled for a structural reason, not a tuning one:
 the memory system has exactly one class of content in it (deaths), the graph is
 written and never read, and the parser's single `target` slot forces an ad-hoc

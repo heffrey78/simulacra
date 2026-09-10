@@ -25,6 +25,11 @@ class Npc:
 @dataclass
 class Theme:
     name: str
+    # What `--theme` accepts and what a world records: the pack's file stem.
+    # `name` is the display name from the TOML, and the two differ ("simulacra"
+    # vs "Simulacra") -- storing the wrong one makes the world's own error
+    # message suggest a `--theme` argument that does not resolve.
+    pack: str = ""
     tagline: str = ""
     narrator_system: str = ""
     director_system: str = ""
@@ -64,6 +69,7 @@ class Theme:
         voice = d.get("voice", {})
         return cls(
             name=d.get("name", name),
+            pack=name,
             tagline=d.get("tagline", ""),
             narrator_system=voice.get("system", ""),
             director_system=d.get("director", {}).get("system", ""),

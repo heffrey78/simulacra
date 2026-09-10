@@ -5,10 +5,11 @@ MILESTONE M1.
 
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass, field
 
-from ..world.floorgen import generate_floor
+from ..world.floorgen import floor_rng, generate_floor
 from ..world.model import Floor, Player
 
 
@@ -20,6 +21,11 @@ class GameState:
     room_id: str
     depth: int = 1
     turns: int = 0
+    # Two seeds, two jobs. `world_seed` belongs to the database and decides
+    # layout at every depth; `seed` is this run's, and decides dice. Before M6
+    # one value did both, and `descend()` generated from the dice stream -- so
+    # a combat roll on floor 1 changed the shape of floor 2.
+    world_seed: int = 0
     seed: int = 0
     rng: random.Random = field(default_factory=random.Random)
     # Theme names of recent floors, fed to the director as a do-not-repeat list.
@@ -35,11 +41,21 @@ class GameState:
 
 
 def persist_floor(store, floor: Floor, run_id: int) -> None:
-    """Write a floor into the graph.
+    """Write a floor's **identity** into the graph.
 
-    Nothing reads this until M4. It is done now anyway because it costs ten lines
-    here and a painful backfill later -- by the time the memory layer exists, the
-    interesting runs will already have happened.
+    Since M6 this is the half of a floor that cannot be recomputed. Layout is a
+    pure function of the world seed and the depth (`floorgen.floor_rng`), so
+    regenerating floor 7 is cheaper than reading it back; what the model
+    contributed -- the floor's name, goal and motifs, and each room's name and
+    concept -- is not reproducible and is what gets stored.
+
+    Call this **after** the director has run. Calling it before is what left
+    `floor:1` named "floor 1" forever, since floor 1 was persisted in `new_run`
+    and directed later in `begin()`.
+
+    Structure is world-scoped (`run_id=None`); traversal is run-scoped. The edge
+    primary key includes `run_id`, so writing `CONTAINS`/`EXIT_*` per run would
+    add an identical row for the same wall on every run, forever.
 
     Note the node rows for `run:` and `floor:`: `Store.neighbors()` joins against
     `nodes`, so an edge whose endpoints have no node row is invisible to it.
@@ -50,38 +66,87 @@ def persist_floor(store, floor: Floor, run_id: int) -> None:
     store.upsert_node(run_node, "run", f"run {run_id}", run_id=run_id)
     store.upsert_node(
         floor_node, "floor", floor.theme_name or f"floor {floor.depth}",
-        {"depth": floor.depth}, run_id=run_id,
+        {
+            "depth": floor.depth,
+            "theme_name": floor.theme_name,
+            "goal": floor.goal,
+            "motifs": list(floor.motifs),
+        },
+        run_id=run_id,
     )
     store.link(run_node, "ENTERED", floor_node, run_id=run_id)
 
     for room in floor.rooms.values():
         store.upsert_node(
             f"room:{room.id}", "room", room.name,
-            {"kind": room.kind.value, "depth": room.depth}, run_id=run_id,
+            {"kind": room.kind.value, "depth": room.depth, "concept": room.concept},
+            run_id=run_id,
         )
-        store.link(floor_node, "CONTAINS", f"room:{room.id}", run_id=run_id)
+        store.link(floor_node, "CONTAINS", f"room:{room.id}")
 
     for room in floor.rooms.values():
         for direction, dest in room.exits.items():
             store.link(
-                f"room:{room.id}", f"EXIT_{direction.value.upper()}",
-                f"room:{dest}", run_id=run_id,
+                f"room:{room.id}", f"EXIT_{direction.value.upper()}", f"room:{dest}"
             )
 
     # One commit for the whole floor, not one per node.
     store.commit()
 
 
-def new_run(store, theme, settings, seed: int | None = None) -> GameState:
-    """Open a run: allocate the run row, build floor 1, persist it, return state."""
-    if seed is None:
-        seed = random.randrange(1 << 30)
+def load_floor_identity(store, floor: Floor) -> bool:
+    """Re-attach a previously generated identity to a freshly built floor.
 
-    run_id = store.start_run(theme.name, seed=seed)
-    # The state RNG and the floor RNG are separate streams off the same seed, so
-    # that in-game rolls can never shift floor layout (or vice versa).
-    floor = generate_floor(1, theme, random.Random(seed))
-    persist_floor(store, floor, run_id)
+    Returns True when the floor already has one, which is the caller's signal to
+    skip the ~19 s tier-3 director call entirely. That skip is the whole payoff
+    of persisting floors: the director is paid once per floor for the life of
+    the world instead of once per floor per run.
+
+    Deliberately all-or-nothing on the floor's own identity: a floor node with
+    no `theme_name` has never been directed, so a half-applied floor cannot
+    happen. Room concepts are applied individually because the director already
+    drops rooms it failed to name.
+    """
+    node = store.node(f"floor:{floor.depth}")
+    if node is None:
+        return False
+    data = json.loads(node["data"] or "{}")
+    if not (data.get("theme_name") or "").strip():
+        return False
+
+    floor.theme_name = data["theme_name"]
+    floor.goal = data.get("goal") or ""
+    floor.motifs = tuple(data.get("motifs") or ())
+
+    for room in floor.rooms.values():
+        row = store.node(f"room:{room.id}")
+        if row is None:
+            continue
+        rd = json.loads(row["data"] or "{}")
+        if name := (row["name"] or "").strip():
+            room.name = name
+        if concept := (rd.get("concept") or "").strip():
+            room.concept = concept
+
+    return True
+
+
+def new_run(store, theme, settings, seed: int | None = None) -> GameState:
+    """Open a run against an existing world: allocate the run row, build floor 1.
+
+    `seed` is context-dependent, and `Store.claim_world_seed` owns the rule: on
+    an unplayed world it sets the world seed (so `--seed 42` still means "give
+    me this dungeon"), and on a played one it is only this run's dice.
+
+    Floor 1 is **not** persisted here. Identity is written after the director
+    has run, which happens in `Engine.begin()` -- writing it here is what left
+    `floor:1` named "floor 1" forever while every deeper floor got its real name.
+    """
+    world_seed = store.claim_world_seed(seed)
+    run_seed = random.randrange(1 << 30) if seed is None else int(seed)
+
+    run_id = store.start_run(theme.name, seed=run_seed)
+    floor = generate_floor(1, theme, floor_rng(world_seed, 1))
 
     return GameState(
         run_id=run_id,
@@ -89,6 +154,7 @@ def new_run(store, theme, settings, seed: int | None = None) -> GameState:
         floor=floor,
         room_id=floor.entrance_id,
         depth=1,
-        seed=seed,
-        rng=random.Random(seed ^ 0x5EED),
+        world_seed=world_seed,
+        seed=run_seed,
+        rng=random.Random(run_seed),
     )

@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from ..world.director import direct_floor
-from ..world.floorgen import generate_floor
+from ..world.floorgen import floor_rng, generate_floor
 from ..world.model import Direction, Room, RoomKind
 from .events import (
     Event,
@@ -39,7 +39,7 @@ from .events import (
 from .combat import actors_attack, clear_dead, player_attacks
 from .judge import adjudicate, apply_verdict
 from .parser import infer, parse
-from .state import persist_floor
+from .state import load_floor_identity, persist_floor
 
 # Two or three recollections, never more. Prompt bloat is real at 4096 context,
 # and a small model handed six memories recites a list instead of speaking.
@@ -125,8 +125,9 @@ class Engine:
         if self.prefetcher is not None:
             self.prefetcher.start()
 
-        # Floor 1 needs a director pass like any other floor.
-        yield from self._direct(self.state.floor)
+        # Floor 1 needs an identity like any other floor -- and, like any other
+        # floor, only needs it generated once in the life of the world.
+        yield from self._establish(self.state.floor)
         yield from self._enter_room(self.state.room_id)
 
     def turn(self, text: str) -> Iterator[Event]:
@@ -190,11 +191,13 @@ class Engine:
 
         self.state.depth += 1
         self.state.player.on_descend(self.state.depth)
-        floor = generate_floor(self.state.depth, self.theme, self.state.rng)
+        # Never `state.rng`: that is the dice stream, and generating from it
+        # made floor N depend on how the player fought on floor N-1.
+        floor = generate_floor(
+            self.state.depth, self.theme, floor_rng(self.state.world_seed, self.state.depth)
+        )
 
-        # Director before persist, so the floor node carries its real name.
-        yield from self._direct(floor)
-        persist_floor(self.store, floor, self.state.run_id)
+        yield from self._establish(floor)
 
         # Set the floor before entering: _enter_room reads state.floor.
         self.state.floor = floor
@@ -516,6 +519,24 @@ class Engine:
 
     # -- shared ------------------------------------------------------------
 
+    def _establish(self, floor) -> Iterator[Event]:
+        """Give a floor its identity, then write it down.
+
+        A floor this world has already named is re-attached for free. That skip
+        is the point of persisting floors: the ~19 s director call is paid once
+        per floor for the life of the world, not once per floor per run -- so
+        the second run through a world waits at no descent at all.
+
+        Persist happens here, after the identity exists either way. Persisting
+        before directing is what left `floor:1` named "floor 1" forever.
+        """
+        if load_floor_identity(self.store, floor):
+            if floor.theme_name:
+                self.state.floor_history.append(floor.theme_name)
+        else:
+            yield from self._direct(floor)
+        persist_floor(self.store, floor, self.state.run_id)
+
     def _direct(self, floor) -> Iterator[Event]:
         """Tier 3. The one place in the loop where the player waits on a spinner."""
         if self.client is None:
@@ -523,7 +544,10 @@ class Engine:
         yield Thinking("The floor takes shape")
         ok = direct_floor(
             floor, self.theme, self.client, self.settings.director,
-            previously=self.state.floor_history[-3:],
+            # From the world, not from this run's traversal: run 2's first
+            # descent has walked nothing, and would otherwise tell the director
+            # to avoid nothing while the world already uses those names.
+            previously=self.store.floor_names(below_depth=floor.depth),
         )
         if ok and floor.theme_name:
             self.state.floor_history.append(floor.theme_name)

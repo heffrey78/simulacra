@@ -29,7 +29,7 @@ from .engine.events import RunEnded
 from .engine.loop import Engine
 from .engine.state import new_run
 from .llm.client import OllamaClient
-from .memory.store import Store
+from .memory.store import Store, WorldError, archive_world
 from .memory.writer import MemoryWriter
 from .narrate.narrator import Narrator
 from .narrate.prefetch import Prefetcher
@@ -97,7 +97,24 @@ def build_session(args, settings: Settings, theme: Theme) -> Session:
             # Before the title screen, so the cold load overlaps the intro.
             client.warm(settings.chat)
 
-    store = Store(settings.db_path)
+    store = Store(settings.db_path, theme=theme.pack, world_seed=args.seed)
+
+    # The theme decides room name pools and the NPC roster, so playing a stored
+    # world under a different one would re-label floors from a vocabulary that
+    # never made them. Same shape as the schema-version refusal.
+    stored = store.world()["theme"]
+    if stored and stored != theme.pack:
+        store.close()
+        raise WorldError(
+            f"{settings.db_path} is a '{stored}' world; you asked for "
+            f"'{theme.pack}'. Play it with --theme {stored}, keep them apart "
+            f"with --db, or start over with --new-world."
+        )
+
+    if args.seed is not None and store.run_count():
+        print(f"[--seed sets this run's dice; the world's layout is fixed at "
+              f"seed {store.world()['world_seed']}]", file=sys.stderr)
+
     if client is not None:
         narrator = Narrator(client, theme, store, settings.narrator)
         prefetcher = Prefetcher(narrator, store, enabled=not args.no_prefetch)
@@ -138,6 +155,33 @@ def play_repl(session: Session) -> None:
             break
 
 
+def _forget(settings: Settings, theme: Theme, who: str) -> int:
+    """`--forget <npc>`: resolve a name to its graph anchor, then wipe.
+
+    Matches against the theme roster rather than the graph, so a typo names the
+    NPCs that exist instead of silently forgetting nothing.
+    """
+    needle = who.strip().lower()
+    match = next(
+        (n for n in theme.npcs if needle in n.name.lower() or needle in n.anchor.lower()),
+        None,
+    )
+    if match is None:
+        known = ", ".join(n.name for n in theme.npcs) or "none in this theme"
+        print(f"no npc matching {who!r}; this theme has: {known}", file=sys.stderr)
+        return 1
+
+    try:
+        store = Store(settings.db_path, theme=theme.pack)
+    except WorldError as e:
+        print(e, file=sys.stderr)
+        return 1
+    removed = store.forget(match.anchor)
+    store.close()
+    print(f"[{match.name} forgot {removed} memories]", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="simulacra")
     ap.add_argument("--ui", choices=["repl", "tui"], default="repl",
@@ -148,6 +192,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, help="deterministic floor generation")
     ap.add_argument("--no-prefetch", action="store_true", help="disable generate-ahead")
     ap.add_argument("--offline", action="store_true", help="no model: procedural names only")
+    ap.add_argument("--new-world", action="store_true",
+                    help="archive the current world and start a fresh one")
+    ap.add_argument("--forget", metavar="NPC",
+                    help="make one NPC forget everything it has been told")
     ap.add_argument("--stats", action="store_true", help="print LLM timings on exit")
     ap.add_argument("--bench", action="store_true", help="run the latency harness and exit")
     args = ap.parse_args(argv)
@@ -178,7 +226,20 @@ def main(argv: list[str] | None = None) -> int:
         print(e, file=sys.stderr)
         return 1
 
-    session = build_session(args, settings, theme)
+    if args.new_world:
+        archived = archive_world(settings.db_path)
+        print(f"[archived {archived}]" if archived
+              else f"[no world at {settings.db_path}; starting fresh]", file=sys.stderr)
+
+    if args.forget:
+        return _forget(settings, theme, args.forget)
+
+    try:
+        session = build_session(args, settings, theme)
+    except WorldError as e:
+        print(e, file=sys.stderr)
+        return 1
+
     try:
         if play_tui is not None:
             play_tui(session)
@@ -187,7 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         session.close(stats=args.stats)
 
-    print(f"\nseed {session.state.seed} -- replay with: simulacra --seed {session.state.seed}")
+    # The world seed and the world file are what reproduce a dungeon now; the
+    # run seed only replays the dice.
+    print(f"\nworld seed {session.state.world_seed} in {session.settings.db_path} "
+          f"-- this run's dice: --seed {session.state.seed}")
     return 0
 
 

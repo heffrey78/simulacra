@@ -1,4 +1,7 @@
-# M6 — Persistent world + reset
+# M6 — Persistent world + reset · ✅ COMPLETE
+
+> **Status: done.** 508 tests green with the daemon unreachable. Findings,
+> including two deviations from this plan, are at the bottom.
 
 > Scoped from [systems.md §4](../plan/systems.md#4-s0--the-persistent-world).
 > First milestone after the POC. It contains no model calls and adds no prose —
@@ -319,3 +322,80 @@ trade and `--forget`/`--new-world` are the mitigations, but expect it to feel
 worse in play than it reads here, and resist adding a "reroll this floor" verb
 in M6 — it belongs with M7's canon amendment, where retirement already has a
 mechanism.
+
+---
+
+## Findings
+
+Appended after implementation, in the manner of M2–M5.
+
+### `link(run_id=None)` has never been insertable
+
+`edges` is `WITHOUT ROWID`, which makes every primary-key column implicitly
+`NOT NULL` — so the `run_id: int | None = None` default that `Store.link()` has
+offered since M0 raises `IntegrityError` the moment anything uses it. Nothing
+ever had, because every caller passed a real run id.
+
+W3 is the first code that wants a world-scoped edge (a wall between two rooms is
+true of the world, not of one run), so this surfaced immediately. `link()` now
+coerces `None` to a `WORLD_SCOPE = 0` sentinel, which also dedupes: before this,
+re-persisting a floor each run would have added an identical `EXIT_NORTH` row
+every run, forever. Guarded by `test_structural_edges_do_not_multiply_per_run`.
+
+### The predicted fixture churn did not happen
+
+This document warned to "expect a diff full of changed fixtures" from the
+dice-coupling fix. In the event, **one** test needed editing, and for an
+unrelated reason (floor 1 is now persisted in `begin()` rather than `new_run`,
+so the assertion had to drive `begin()` first).
+
+The reason is `Store.claim_world_seed`, which was not in the original plan.
+Rather than making `--seed` mean the run seed unconditionally, it sets the
+*world* seed while a world is still unplayed and the run seed afterwards — which
+is exactly the context-dependent behaviour W2 specified for the CLI, applied one
+level down. The effect is that `new_run(store, theme, settings, seed=42)` on a
+fresh store still means "give me this dungeon", so every existing test kept
+working unchanged. Worth noting for M7: applying a documented user-facing rule
+at the API boundary rather than in the CLI removed the migration cost entirely.
+
+### A world must record the pack stem, not the theme's display name
+
+`Theme.name` is the display name from the TOML (`"Simulacra"`); `--theme` takes
+the file stem (`"simulacra"`). Storing the former made the theme-mismatch
+refusal suggest `--theme Simulacra`, which does not resolve. `Theme` now carries
+`pack`, and the world records that.
+
+Small, but it is the same class of bug as the schema-version message: an error
+whose entire job is to name the way out has to name something that works.
+
+### Deviations from the plan, both deliberate
+
+**`floor_rng` seeds from a string, not `world_seed ^ depth`.** XOR makes
+adjacent depths differ by a single bit. `random.Random(f"{world_seed}:{depth}")`
+hashes with SHA-512 internally, is stable across processes, and is unaffected by
+`PYTHONHASHSEED`. Guarded by `test_adjacent_depths_are_not_the_same_floor`.
+
+**The run seed is a recorded random, not derived from `run_id`.** Deriving it
+would have made runs reproducible from the database but left `--seed` with
+nothing to set on an existing world. A recorded random is reproducible *and*
+settable, which is strictly more useful for the same storage.
+
+### W6 — the payoff, measured
+
+Two runs through one world, floor 1 to floor 3, `qwen3:1.7b` on this box:
+
+| | tier 3 (director) | tier 2 (prose) | wall to floor 3 |
+|---|---|---|---|
+| run 1, fresh world | 3 calls, 18.7 s avg | 10 calls, 4.9 s avg | **105.6 s** |
+| run 2, same world | **0** | **0** | **0.0 s** |
+
+Run 2 reached floor 3 having spent no model time at all. Both halves of W3
+landed: stored identity removed the director calls, and the prose cache key
+stabilised on the stored concepts, which removed the narration too. The player
+now waits once per floor for the life of a world rather than once per floor per
+run.
+
+This is a larger change to the latency profile than the milestone claimed. It
+also raises something for M10: with a world this cheap to re-walk, the thing
+that makes a second run interesting has to be what *changed* — which is what S1
+canon and S5 discovery are for.

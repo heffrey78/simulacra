@@ -130,8 +130,11 @@ layout, and (via `seed ^ 0x5EED`) in-game dice.
 Split it:
 
 - **World seed** — a property of the database, written once at world creation.
-  Decides layout at every depth: `generate_floor(depth, theme, Random(world_seed ^ depth))`.
-- **Run seed** — per-run, derived from `run_id`. Decides dice only. Two runs
+  Decides layout at every depth, via one helper both call sites go through:
+  `floor_rng(world_seed, depth)`. It seeds from `f"{world_seed}:{depth}"`
+  rather than `world_seed ^ depth`, so adjacent depths do not differ by a
+  single bit.
+- **Run seed** — per-run, recorded in `runs.seed`. Decides dice only. Two runs
   through the same world play differently but walk the same floors.
 
 A new single-row table holds the world's identity:
@@ -445,7 +448,7 @@ floorgen/director throughout: **structure is code's, identity is the model's.**
 
 | | Milestone | Contents | Gate |
 |---|---|---|---|
-| **M6** | Persistent world + reset | S0 — world table, seed split, recompute-and-reattach, `--new-world` / `--forget` | Same world across two runs; director cost paid once |
+| **M6** ✅ | Persistent world + reset | S0 — world table, seed split, recompute-and-reattach, `--new-world` / `--forget` | **Met.** Run 2 reached floor 3 with 0 model calls and 0.0 s of wall time |
 | **M7** | Canon | S1 — `canon` table, provenance, persistent NPC entities, derived-canon refresh | An NPC has a backstory that is not a death |
 | **M8** | Routes + session | S2 + S3, and the parser's topic slot | Eight questions, eight answers, one fact said once |
 | **M9** | Action vocabulary | S4 — trade, gifts, NPC movement, disposition | A gift changes what an NPC will tell you |
@@ -458,8 +461,8 @@ alone would read as no improvement.
 
 Task decomposition follows the existing convention — one `docs/tasks/M<n>-*.md`
 per milestone, written before implementation and amended with findings after.
-[M6](../tasks/M6-persistent-world-tasks.md) and
-[M7](../tasks/M7-canon-tasks.md) are scoped.
+[M6](../tasks/M6-persistent-world-tasks.md) is **done, with findings**;
+[M7](../tasks/M7-canon-tasks.md) is scoped.
 
 ---
 

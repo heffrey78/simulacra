@@ -17,6 +17,7 @@ the engine noticing.
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 import struct
 import threading
@@ -30,7 +31,72 @@ import sqlite_vec
 
 EMBED_DIM = 768  # nomic-embed-text
 
+# Bumped whenever a schema change makes an older build unable to read this file
+# correctly. A world someone has played twenty runs into must be able to *say*
+# it was written by a different build; a stack trace against a changed table is
+# the failure mode this exists to prevent. M7 adds the first forward migration.
+SCHEMA_VERSION = 1
+
+
+# `edges` is WITHOUT ROWID, which makes every primary-key column implicitly
+# NOT NULL -- so `run_id=None` on a link has never actually been insertable,
+# despite the signature offering it since M0. World-scoped edges (a wall between
+# two rooms, which is true of the world rather than of one run) use this
+# sentinel instead, and dedupe across runs because it is a constant.
+WORLD_SCOPE = 0
+
+
+class WorldError(RuntimeError):
+    """Something about this world file stops us opening it. Names the way out."""
+
+
+class WorldVersionError(WorldError):
+    """This database was written by a different build."""
+
+
+def archive_world(path: Path | str) -> Path | None:
+    """Move a world file aside, siblings and all. Returns where it went.
+
+    Archive, never delete. The whole premise of a persistent world is that
+    losing it costs something, and disk is not the constrained resource on this
+    box -- a destructive default on a file someone has spent twenty runs filling
+    is the wrong default. Returns None when there was nothing to move.
+    """
+    path = Path(path)
+    if not path.exists():
+        return None
+
+    stamp = time.strftime("%Y%m%dT%H%M%S")
+    dest = path.with_name(f"{path.stem}-{stamp}{path.suffix}")
+    n = 2
+    while dest.exists():  # twice in one second is rare, not impossible
+        dest = path.with_name(f"{path.stem}-{stamp}-{n}{path.suffix}")
+        n += 1
+
+    path.rename(dest)
+    # WAL mode means the real contents may still be sitting in these.
+    for suffix in ("-wal", "-shm"):
+        side = Path(f"{path}{suffix}")
+        if side.exists():
+            side.rename(Path(f"{dest}{suffix}"))
+    return dest
+
+
 SCHEMA = """
+-- The world's own identity. Exactly one row, ever.
+--
+-- `world_seed` is what makes floors persist: layout at every depth is a pure
+-- function of it, so a floor is *recomputed* rather than stored. Splitting it
+-- from the per-run dice seed is what stops a combat roll changing the shape of
+-- the next floor (see engine/state.py).
+CREATE TABLE IF NOT EXISTS world (
+    id             INTEGER PRIMARY KEY CHECK (id = 1),
+    world_seed     INTEGER NOT NULL,
+    theme          TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    created_at     REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at  REAL NOT NULL,
@@ -128,7 +194,21 @@ class Recollection:
 
 
 class Store:
-    def __init__(self, path: Path | str, *, embed_dim: int = EMBED_DIM):
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        embed_dim: int = EMBED_DIM,
+        theme: str = "",
+        world_seed: int | None = None,
+    ):
+        """Open (or create) a world.
+
+        `theme` and `world_seed` are used **only** when this file has no world
+        row yet -- opening an existing world never rewrites its identity. They
+        default to empty/random so that a bare `Store(tmp_path)` in a test still
+        gets a valid world without knowing this table exists.
+        """
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.embed_dim = embed_dim
@@ -145,9 +225,95 @@ class Store:
         # this two interleaved commits silently drop each other's work --
         # observed as 5 vectors for 6 memories.
         self._lock = threading.RLock()
+        # Before the schema is created, while "has no world table" still
+        # distinguishes a pre-M6 file from a brand new one.
+        self._refuse_legacy()
         self.db.executescript(SCHEMA)
         self.db.executescript(VEC_SCHEMA)
         self.db.commit()
+        self._ensure_world(theme, world_seed)
+
+    # -- world -------------------------------------------------------------
+
+    def _has_table(self, name: str) -> bool:
+        return self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone() is not None
+
+    def _refuse_legacy(self) -> None:
+        """A world from before floors persisted is not opened, and not migrated.
+
+        An empty file and a POC-era file both lack the `world` table; recorded
+        runs are what tells them apart. Migrating is possible and pointless --
+        those runs walked floors generated from a throwaway per-run seed, so
+        their room ids refer to rooms that no longer exist and never will.
+        """
+        if self._has_table("world") or not self._has_table("runs"):
+            return
+        played = self.db.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"]
+        if played:
+            raise WorldVersionError(
+                f"{self.path} predates the persistent world "
+                f"({played} runs recorded, no world table). Archive it with: "
+                f"simulacra --new-world"
+            )
+
+    def _ensure_world(self, theme: str, world_seed: int | None) -> None:
+        with self._lock:
+            row = self.db.execute("SELECT * FROM world WHERE id = 1").fetchone()
+            if row is None:
+                self.db.execute(
+                    """INSERT INTO world (id, world_seed, theme, schema_version, created_at)
+                       VALUES (1, ?, ?, ?, ?)""",
+                    (
+                        random.randrange(1 << 30) if world_seed is None else int(world_seed),
+                        theme,
+                        SCHEMA_VERSION,
+                        time.time(),
+                    ),
+                )
+                self.db.commit()
+                return
+
+            if row["schema_version"] != SCHEMA_VERSION:
+                raise WorldVersionError(
+                    f"{self.path} is schema version {row['schema_version']}; this build "
+                    f"speaks {SCHEMA_VERSION}. Archive it with: simulacra --new-world"
+                )
+
+            # A world created by a bare Store() has no theme yet. Claiming it on
+            # the first real open beats a second table or a nullable column.
+            if theme and not row["theme"]:
+                self.db.execute("UPDATE world SET theme = ? WHERE id = 1", (theme,))
+                self.db.commit()
+
+    def world(self) -> sqlite3.Row:
+        with self._lock:
+            return self.db.execute("SELECT * FROM world WHERE id = 1").fetchone()
+
+    def run_count(self) -> int:
+        with self._lock:
+            return int(self.db.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"])
+
+    def claim_world_seed(self, seed: int | None) -> int:
+        """Set the world seed, but only while the world is still untouched.
+
+        This is what makes `--seed` context-dependent rather than ambiguous. On
+        a world nobody has played it means "give me this dungeon", the sense it
+        has always had. On a world with runs behind it, changing the layout
+        under floors the player has already walked is not something a flag
+        should silently do -- there it is the run seed, and the caller keeps it
+        for the dice.
+        """
+        current = int(self.world()["world_seed"])
+        if seed is None or self.run_count():
+            return current
+        with self._lock:
+            self.db.execute("UPDATE world SET world_seed = ? WHERE id = 1", (int(seed),))
+            self.db.commit()
+        return int(seed)
+
+    # -- lifecycle ---------------------------------------------------------
 
     def close(self) -> None:
         self.db.close()
@@ -201,12 +367,45 @@ class Store:
         self, src: str, rel: str, dst: str, *, run_id: int | None = None,
         weight: float = 1.0, data: dict | None = None,
     ) -> None:
+        """Add or reinforce an edge.
+
+        `run_id=None` means the edge is a fact about the world rather than about
+        one run -- stored as `WORLD_SCOPE` so that re-persisting the same floor
+        on every run reinforces one row instead of adding an identical one.
+        """
+        run_id = WORLD_SCOPE if run_id is None else run_id
         with self._lock:
             self.db.execute(
                 """INSERT INTO edges (src, rel, dst, run_id, weight, data) VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT(src, rel, dst, run_id) DO UPDATE SET weight = edges.weight + ?""",
                 (src, rel, dst, run_id, weight, json.dumps(data or {}), weight),
             )
+
+    def node(self, node_id: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.db.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+
+    def floor_names(self, *, below_depth: int, limit: int = 3) -> list[str]:
+        """Names of the world's already-identified floors, nearest first.
+
+        Feeds the director's do-not-repeat list. Reading it from the world
+        rather than from this run's traversal matters once floors persist: run
+        2's first descent has walked nothing, and would otherwise tell the
+        director to avoid nothing while the world already uses those names.
+        """
+        with self._lock:
+            rows = self.db.execute(
+                """SELECT name, data FROM nodes
+                   WHERE kind = 'floor' AND json_extract(data, '$.depth') < ?
+                   ORDER BY json_extract(data, '$.depth') DESC LIMIT ?""",
+                (below_depth, limit),
+            ).fetchall()
+        out = []
+        for r in rows:
+            name = (json.loads(r["data"] or "{}").get("theme_name") or "").strip()
+            if name:
+                out.append(name)
+        return out
 
     def neighbors(self, node_id: str, rel: str | None = None, *, incoming: bool = False) -> list[sqlite3.Row]:
         with self._lock:
@@ -340,6 +539,32 @@ class Store:
                 )
                 for r in rows
             ]
+
+    def forget(self, node_id: str) -> int:
+        """Erase what the world remembers *about* one node, keeping the node.
+
+        The escape hatch a persistent world needs: a generated persona that goes
+        bad is permanent unless something can retire it, and retiring one NPC is
+        a far better answer than discarding a world.
+
+        Subject links go first and memories only follow when nothing else claims
+        them -- a death is subject to both the NPC who witnessed it and the room
+        it happened in, and forgetting the NPC must not quietly erase the room's
+        history too. Returns the number of memories actually removed.
+        """
+        with self._lock:
+            self.db.execute("DELETE FROM memory_subjects WHERE node_id = ?", (node_id,))
+            orphans = [
+                r["id"] for r in self.db.execute(
+                    """SELECT id FROM memories
+                       WHERE id NOT IN (SELECT memory_id FROM memory_subjects)"""
+                )
+            ]
+            for mid in orphans:
+                self.db.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (mid,))
+                self.db.execute("DELETE FROM memories WHERE id = ?", (mid,))
+            self.db.commit()
+            return len(orphans)
 
     # -- prose cache -------------------------------------------------------
 

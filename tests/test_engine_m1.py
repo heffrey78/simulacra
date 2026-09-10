@@ -289,8 +289,12 @@ def test_same_seed_produces_the_same_floor(tmp_path):
 
 
 def test_floor_is_persisted_to_the_graph(game):
-    """Nothing reads this until M4; it is written now so M4 has history."""
+    """Read back by `load_floor_identity` since M6, which is what makes floors
+    persist. Written in `begin()` rather than `new_run` so the director has
+    already run and the floor node carries its real name."""
     engine, state, store = game
+    list(engine.begin())
+
     floor_node = f"floor:{state.depth}"
     rooms = store.neighbors(floor_node, "CONTAINS")
     assert len(rooms) == len(state.floor.rooms)

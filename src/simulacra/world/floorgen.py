@@ -55,6 +55,22 @@ def _tier_for(depth: int, rng: random.Random) -> str:
     return tier
 
 
+def floor_rng(world_seed: int, depth: int) -> random.Random:
+    """The one stream that decides what depth `depth` looks like in this world.
+
+    Both call sites (`new_run` for floor 1, `descend` for the rest) go through
+    here, because the alternative is what M6 found: `descend` was generating
+    from `state.rng` -- the *dice* stream -- so how many attacks you rolled on
+    floor 1 decided the shape of floor 2. Harmless while floors were thrown
+    away each run; fatal once a world seed is meant to reproduce a dungeon.
+
+    Seeded from a string rather than `world_seed ^ depth` so adjacent depths
+    don't differ by a single bit. `Random(str)` hashes with SHA-512 internally,
+    so this is stable across processes and unaffected by PYTHONHASHSEED.
+    """
+    return random.Random(f"{world_seed}:{depth}")
+
+
 def generate_floor(depth: int, theme: Theme, rng: random.Random | None = None) -> Floor:
     rng = rng or random.Random(depth)
     size = min(5 + depth // 2, 12)
