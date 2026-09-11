@@ -598,6 +598,38 @@ The baseline also showed the director dodging its own avoid-list by numbering �
 *"Erebus's Veil"*, *"…II"*, *"…III"* — so floor names are now compared by stem.
 
 
+**M13 — Open items** ✅ *done* · **[task record →](../tasks/M13-open-items-tasks.md)**
+This is one ledger of everything recorded as open across M5–M12 and both
+playtests. There are seventeen items: seven fixed, four closed earlier or by
+decision, one accepted, and five left open, each with a reason and a home.
+
+The fixes are to the judge and to dialogue:
+- the judge's reason is guarded like the narrator's prose, and carries no
+  numbers;
+- every effect the engine applies is stated in its own words after the roll;
+- the judge sees the pack, and a heal needs something to heal with;
+- a recalled run reaches the NPC addressed to it, and is spoken, not narrated;
+- floor 1's name and goal reach the TUI header;
+- Hardpan has a floor title of its own.
+
+Canon holding contradictions was decided at the first playtest — hold both — and
+needs nothing built.
+
+Measured live against the committed build:
+- past-run replies narrated went from 6 of 6 to **0 of 6**;
+- judge reasons stating a number went from 12 of 25 to **0 of 25**.
+
+The measurement also caught a regression M13 had introduced. Offered a
+`protect` kind, the model filed "protection" under `heal`, and ruled pouring
+water over your head a heal every time, with nothing carried. Code now refuses
+a heal with no source.
+
+The defensive kind was then probed live before shipping. Bare kind names got 1
+of 6 test rulings right; glossed with the verbs the parser sends, 5 of 6. The
+model paired `defend` with `affects: enemy` every time, so `defend` becomes the
+player's guard whoever the ruling names.
+
+
 ## 10. State of the repo
 
 Built and verified:

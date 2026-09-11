@@ -30,6 +30,7 @@ MILESTONE M8.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 
 from .dealings import holdings, is_warm, is_wary
@@ -75,8 +76,13 @@ _KEYWORDS: dict[str, set[str]] = {
 # Per-route instruction. Every branch has one: M7 learned the expensive way that
 # a prompt of pure data makes a 1.7b transcribe the last thing it was handed.
 _INSTRUCTIONS = {
-    "past": ("Say out loud what happened to the delver you remember, including "
-             "the floor and what killed them. Do not invent any other history."),
+    # M13: "say out loud what happened" was obeyed as narration -- "The delver
+    # approached the Assayer on floor 1..." -- a report about the NPC, in the
+    # NPC's mouth. Told who it is talking to and in which person, it speaks.
+    "past": ("Speak to the delver in front of you, as yourself: tell them what "
+             "happened to the one you remember -- the floor, and what killed "
+             "them. Say \"I\" for yourself; do not narrate. Do not invent any "
+             "other history."),
     "self": "Answer them from what is true of you. Do not invent history.",
     "none": "You do not know anything about that. Say so briefly, in character.",
     "repeat": ("You have already told them this. Say so, briefly, and do not "
@@ -374,7 +380,24 @@ class Router:
         # Deaths last: a small model attends hardest to the end of its prompt,
         # and a death is the most worth saying out loud.
         found = sorted(found, key=lambda r: r.kind == "death")
-        return [Fact(f"memory:{r.id}", r.text) for r in found]
+        return [Fact(f"memory:{r.id}", self._to_listener(r.text, actor.name)) for r in found]
+
+    @staticmethod
+    def _to_listener(text: str, name: str) -> str:
+        """A memory as the NPC holding it would say it.
+
+        Memories are written from outside -- "A delver approached the Assayer on
+        floor 1" -- and handed to the Assayer, a 1.7b read that back verbatim:
+        narration about the NPC, in the NPC's own mouth (M11.1). Addressed to
+        the listener, the same fact is something the NPC can say. The bare name
+        goes too, for memories that recorded it as a topic ("asked about
+        assayer").
+        """
+        bare = re.sub(r"^(?:the|a|an)\s+", "", name.strip(), flags=re.I)
+        for form in dict.fromkeys((name.strip(), bare)):
+            if form:
+                text = re.sub(rf"\b{re.escape(form)}\b", "you", text, flags=re.I)
+        return text[:1].upper() + text[1:]
 
     # -- assembly ----------------------------------------------------------
 

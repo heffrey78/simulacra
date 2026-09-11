@@ -26,6 +26,7 @@ from ..world.model import Direction, Item, Room, RoomKind
 from .events import (
     Event,
     FloorDescended,
+    FloorNamed,
     ItemTaken,
     Line,
     Notice,
@@ -198,6 +199,10 @@ class Engine:
         # Floor 1 needs an identity like any other floor -- and, like any other
         # floor, only needs it generated once in the life of the world.
         yield from self._establish(self.state.floor)
+        floor = self.state.floor
+        yield FloorNamed(depth=floor.depth,
+                         theme_name=floor.theme_name or self.theme.floor_title(floor.depth),
+                         goal=floor.goal)
         yield from self._enter_room(self.state.room_id)
 
     def turn(self, text: str) -> Iterator[Event]:
@@ -292,7 +297,8 @@ class Engine:
 
         yield FloorDescended(
             depth=self.state.depth,
-            theme_name=floor.theme_name or f"floor {self.state.depth}",
+            # The theme's own title, as `FloorNamed` gives floor 1 (M13).
+            theme_name=floor.theme_name or self.theme.floor_title(self.state.depth),
             goal=floor.goal,
         )
         yield from self._enter_room(floor.entrance_id)
@@ -695,8 +701,12 @@ class Engine:
             yield Notice("I don't understand.")
             return
 
+        # The pack goes to the judge alone, not into `_room_summary`: that is
+        # the parser fallback's context too, and a carried item there is a
+        # target for it to lift (M11.1's lesson about shared helpers).
         verdict = adjudicate(
-            action, self._room_summary(), self.theme, self.client, self.settings.judge
+            action, self._room_summary(), self.theme, self.client, self.settings.judge,
+            carrying=[i.name for i in self.state.player.inventory],
         )
         self._resolved = True
         self.state._last_action = action
@@ -787,7 +797,10 @@ class Engine:
         # *delver* brought, never the NPC's own reply. Storing the reply feeds
         # an NPC its own words on the next run, and the loop compounds: three
         # runs in, recall was two self-quotations crowding out an actual death.
-        asked = (topic or addressee or self._last_action).strip()
+        # The topic only (M13). Falling back to the addressee wrote "greet
+        # assayer" down as "asked about assayer" -- a question nobody asked,
+        # recalled on the next run as though it had been.
+        asked = (topic or "").strip()
         yield Transcript(
             summary=(f"A delver approached {actor.name} on floor {self.state.depth}"
                      + (f" and asked about {asked}." if asked else ".")),

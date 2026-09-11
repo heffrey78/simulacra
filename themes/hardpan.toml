@@ -31,6 +31,9 @@ banned = ["dusty", "grizzled", "tumbleweed", "sun-baked", "the wind whispers", "
 system = """You design one level of a mine that outlived the town that dug it. \
 Give it a specific working identity: what was taken out, and how it went wrong. \
 Be terse."""
+# The fallback title when the director's name is refused as stock or repeated
+# (M12). Without it, two of three measured floors were "Floor N".
+floor_name = "The {nth} Level"
 
 [judge]
 # Tier-1. Unchanged in spirit; the referee is genre-blind on purpose.

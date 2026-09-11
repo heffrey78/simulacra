@@ -356,6 +356,34 @@ def test_the_past_route_drops_information_free_chatter(talking):
     assert not any("asked about" in t for t in texts)
 
 
+def test_a_memory_reaches_the_npc_addressed_to_it(talking):
+    """M11.1: "The delver approached the Assayer on floor 1..." -- a memory
+    written from outside, read back verbatim in the NPC's own mouth."""
+    engine, state, store, _ = talking
+    store.remember(state.run_id - 1,
+                   "A delver left the Archivist on floor 1 and was killed by an offcut.",
+                   kind="death", subjects=[ARCHIVIST], embedding=[0.0] * 768)
+    store.commit()
+    texts = [f.text for f in engine._router._past(state, actor_of(state), "")]
+    assert texts == ["A delver left you on floor 1 and was killed by an offcut."]
+
+
+def test_a_memory_loses_the_bare_name_and_a_leading_one():
+    assert Router._to_listener("asked about archivist.", "the Archivist") == "Asked about you."
+    assert Router._to_listener("The Archivist watched them go.", "the Archivist") == \
+        "You watched them go."
+
+
+def test_a_greeting_is_not_recorded_as_a_question(talking):
+    """"greet assayer" was written down as "asked about assayer" (M11.1), and a
+    later run recalled the question nobody asked."""
+    engine, _, _, _ = talking
+    # No topic: the case that fell back to the addressee.
+    summaries = [e.summary for e in engine.turn("talk to archivist")
+                 if isinstance(e, Transcript)]
+    assert summaries and not any("asked about" in s for s in summaries)
+
+
 def test_the_self_route_does_not_print_canon_twice(talking):
     engine, state, _, _ = talking
     brief = engine._router.brief(state, actor_of(state), "your name")

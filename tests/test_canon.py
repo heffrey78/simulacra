@@ -331,7 +331,8 @@ def test_every_branch_carries_an_instruction(talking):
                    kind="death", subjects=[npc.anchor], embedding=[0.0] * 768)
     store.commit()
     list(engine.turn("talk to archivist"))
-    assert "Say out loud what happened to the delver" in prompt_text(client)
+    # Reworded in M13 so a recalled run is spoken rather than narrated.
+    assert "tell them what happened to the one you remember" in prompt_text(client)
 
 
 def test_a_transcribed_prompt_never_reaches_the_player(talking):

@@ -21,6 +21,7 @@ pytest.importorskip("textual", reason="needs the 'tui' extra: pip install -e '.[
 from simulacra.engine.events import (  # noqa: E402
     Damage,
     FloorDescended,
+    FloorNamed,
     Line,
     Notice,
     ProseDelta,
@@ -280,6 +281,21 @@ async def test_floor_name_and_goal_stay_on_screen():
         text = str(app.query_one("#status", StatusPanel).content)
         assert "The Salt Galleries" in text
         assert "Find what the tide left." in text
+
+
+@tui_test
+async def test_the_first_floor_reaches_the_header_too():
+    """M5's recorded gap: only a descent carried a floor's identity, so the
+    floor a run starts on never showed its tier-3 goal (M13)."""
+    app = SimulacraApp(SilentEngine())
+    async with app.run_test() as pilot:
+        app.dispatch(FloorNamed(depth=1, theme_name="The First Level",
+                                goal="Find out who stopped the pumps."))
+        app.dispatch(StatusChanged(hp=20, max_hp=20, depth=1))
+        await pilot.pause()
+        text = str(app.query_one("#status", StatusPanel).content)
+        assert "The First Level" in text
+        assert "Find out who stopped the pumps." in text
 
 
 @tui_test

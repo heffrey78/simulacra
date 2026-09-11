@@ -205,7 +205,10 @@ def test_damage_target_with_no_target_is_harmless():
 
 
 def test_heal_cannot_exceed_max_hp():
+    from simulacra.world.model import Item
     state = FakeState(hp=19)
+    # A heal needs a source since M13.
+    state.player.inventory.append(Item(id="i:poultice", name="a poultice", heal=2))
     apply_verdict(verdict(effect="heal_self", magnitude=3), state, Rigged(20))
     assert state.player.hp == state.player.max_hp
 

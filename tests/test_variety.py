@@ -199,7 +199,7 @@ def test_a_stock_floor_name_is_refused():
     theme = Theme.load("hardpan")
     floor = floor_of(theme, depth=3)
     apply_floor_plan(floor, plan(floor, theme_name="Echoes of the Forgotten"), theme=theme)
-    assert floor.theme_name == "Floor 3"
+    assert floor.theme_name == "The Third Level"
 
 
 def test_a_repeated_mood_is_refused():
@@ -246,7 +246,10 @@ def test_the_engine_passes_every_other_floors_names_and_moods(tmp_path, theme):
 
 def test_floor_titles():
     assert Theme.load("simulacra").floor_title(2) == "The Second Impression"
-    assert Theme.load("hardpan").floor_title(4) == "Floor 4"
+    assert Theme.load("hardpan").floor_title(4) == "The Fourth Level"
+    # The engine's own fallback, for a theme with no pattern.
+    from dataclasses import replace
+    assert replace(Theme.load("hardpan"), floor_name="").floor_title(4) == "Floor 4"
 
 
 # -- V4: a described thing you can't take ------------------------------------

@@ -73,6 +73,21 @@ class FloorDescended(Event):
 
 
 @dataclass(frozen=True)
+class FloorNamed(Event):
+    """The floor a run *starts* on has its identity (M13).
+
+    `FloorDescended` is only emitted by a descent, so floor 1's tier-3 name and
+    goal never reached the TUI's header (M5's recorded gap). Emitting a descent
+    from `begin()` would print "You descend to floor 1" in the REPL; this is the
+    separate event M5 asked for, and renderers without a header ignore it.
+    """
+
+    depth: int
+    theme_name: str
+    goal: str
+
+
+@dataclass(frozen=True)
 class ItemTaken(Event):
     item: str
 

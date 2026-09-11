@@ -26,13 +26,17 @@ FUMBLE = 1
 # "braced", and nothing anywhere read it -- it counted down and displayed.
 SHAKEN = "shaken"          # the judge's (you, hinder): your footing is gone
 HIDDEN = "hidden"          # the `hide` verb: out of sight
+GUARDED = "guarded"        # the judge's (you, protect): ready for the blow (M13)
 SHAKEN_PENALTY = 2         # defense, while shaken
 HIDDEN_BONUS = 2           # to hit, on the attack that ends hiding
+GUARD_BONUS = 3            # defense, for the one round it is up
 HIDE_DIFFICULTY = 12
 
 
 def player_defense(player: Player) -> int:
-    return player.defense - (SHAKEN_PENALTY if SHAKEN in player.effects else 0)
+    return (player.defense
+            - (SHAKEN_PENALTY if SHAKEN in player.effects else 0)
+            + (GUARD_BONUS if GUARDED in player.effects else 0))
 
 
 def best_weapon(player: Player) -> Item | None:

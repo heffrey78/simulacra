@@ -43,6 +43,7 @@ from ..engine.events import (
     Damage,
     Event,
     FloorDescended,
+    FloorNamed,
     Improvised,
     ItemTaken,
     Line,
@@ -276,7 +277,7 @@ class StatusPanel(Static):
         self.room = event.name
         self.repaint()
 
-    def descended(self, event: FloorDescended) -> None:
+    def descended(self, event: FloorDescended | FloorNamed) -> None:
         self.floor_name, self.goal = event.theme_name, event.goal
         self.repaint()
 
@@ -514,6 +515,11 @@ class SimulacraApp(App[None]):
                     log.write(Text(event.goal, style="dim"))
                 self.query_one("#status", StatusPanel).descended(event)
                 self.query_one("#map", MapPanel).descended()
+
+            case FloorNamed():
+                # Floor 1's name and goal, for the header only (M13). The log
+                # has already opened with the theme's title.
+                self.query_one("#status", StatusPanel).descended(event)
 
             case NpcPresent():
                 tag = " (remembers you)" if event.remembers else ""
