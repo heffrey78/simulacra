@@ -171,6 +171,9 @@ def simulate_run(seed: int, theme, *, with_loot: bool = True) -> int:
     what actually ends a run. By the same reasoning it plays with loot (M14):
     it searches every room for its cache and takes what every kill leaves, so
     the curve these tests guard is the game's, not the game before loot.
+
+    A floor without a vault is armed either way (M14.1): that is the base game
+    as designed, not loot, and M3's calibration was made without it.
     """
     rng = random.Random(seed)
     player = Player()
@@ -179,6 +182,7 @@ def simulate_run(seed: int, theme, *, with_loot: bool = True) -> int:
         floor = generate_floor(
             depth, theme, random.Random(seed + depth),
             loot_rng=random.Random(f"{seed}:{depth}:loot") if with_loot else None,
+            vault_rng=random.Random(f"{seed}:{depth}:vault"),
         )
         drops = (lambda dead, d=depth: loot.drop_for(dead, theme, d, rng)) if with_loot else None
         for room in floor.rooms.values():

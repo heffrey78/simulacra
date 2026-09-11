@@ -297,7 +297,9 @@ def test_authored_canon_reaches_the_prompt(talking):
     list(engine.turn("talk to archivist"))
     text = prompt_text(client)
     assert "What is true of you:" in text
-    assert npc.canon[0] in text
+    # In the NPC's own voice since M14.1: the authored line has no subject.
+    from simulacra.engine.routes import as_speaker
+    assert as_speaker(npc.canon[0]) in text
 
 
 def test_canon_and_recollections_are_separate_sections(talking):

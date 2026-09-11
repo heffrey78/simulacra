@@ -248,7 +248,8 @@ def new_run(store, theme, settings, seed: int | None = None) -> GameState:
 
     run_id = store.start_run(theme.name, seed=run_seed)
     floor = generate_floor(1, theme, floor_rng(world_seed, 1),
-                           loot_rng=floor_rng(world_seed, 1, "loot"))
+                           loot_rng=floor_rng(world_seed, 1, "loot"),
+                           vault_rng=floor_rng(world_seed, 1, "vault"))
     place_npcs(store, floor, theme)
     place_bones(store, floor)
 

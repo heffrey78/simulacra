@@ -78,7 +78,8 @@ def floor_rng(world_seed: int, depth: int, stream: str = "") -> random.Random:
 
 
 def generate_floor(depth: int, theme: Theme, rng: random.Random | None = None,
-                   loot_rng: random.Random | None = None) -> Floor:
+                   loot_rng: random.Random | None = None,
+                   vault_rng: random.Random | None = None) -> Floor:
     rng = rng or random.Random(depth)
     size = min(5 + depth // 2, 12)
 
@@ -129,6 +130,11 @@ def generate_floor(depth: int, theme: Theme, rng: random.Random | None = None,
     _place_npcs(rooms, spine[0], depth, theme)
     # 4. Caches (M14), from their own stream and after everything else, so
     #    they cannot move a single draw the floor made before they existed.
+    # 5. The vault's weapon, where the floor has no vault (M14.1). The base
+    #    game rather than loot, so it has its own stream: the simulation's
+    #    loot-free baseline arms these floors too.
+    if vault_rng is not None:
+        _arm_vaultless(rooms, depth, theme, vault_rng)
     if loot_rng is not None:
         _hide_caches(rooms, depth, theme, loot_rng)
     return Floor(depth=depth, rooms=rooms, entrance_id=spine[0])
@@ -257,6 +263,27 @@ def make_item(pool, cat: str, depth: int, rng: random.Random) -> Item:
 
 def _item(theme: Theme, cat: str, depth: int, rng: random.Random) -> Item:
     return make_item(theme.items.get(cat), cat, depth, rng)
+
+
+def _arm_vaultless(rooms: dict[str, Room], depth: int, theme: Theme, rng: random.Random) -> None:
+    """A floor without a vault still gets the vault's weapon (M14.1).
+
+    On floors of five or six rooms the vault's slot and the shrine's are the
+    same room, and the shrine wins -- so floors 1-3 have never had a vault, and
+    the third playtest fought bare-handed to floor 4. Re-roling those rooms
+    would change every existing world's layout; this adds the weapon from a
+    stream of its own instead, to the room that took the vault's place.
+
+    It moves the curve: the simulated median run goes from floor 4 to 6, which
+    is M3's calibration having been made on unarmed early floors. See the
+    M14.1 findings.
+    """
+    if any(r.kind is RoomKind.VAULT for r in rooms.values()):
+        return
+    host = (next((r for r in rooms.values() if r.kind is RoomKind.SHRINE), None)
+            or next((r for r in rooms.values() if r.kind is RoomKind.LAIR), None)
+            or rooms[sorted(rooms)[0]])
+    host.items.append(make_item(theme.items.get("weapon"), "weapon", depth, rng))
 
 
 def _hide_caches(rooms: dict[str, Room], depth: int, theme: Theme, rng: random.Random) -> None:

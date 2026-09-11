@@ -136,7 +136,9 @@ def test_entering_the_room_announces_them_as_a_person_not_a_threat(game):
 def test_talking_streams_a_reply(game):
     engine, _, _, _ = game
     events = list(engine.turn("talk to archivist"))
-    assert any(isinstance(e, NpcPresent) for e in events)
+    # No "is here." under every greeting (M14.1): the room already said so,
+    # and presence is re-announced only when an earlier run surfaces.
+    assert not any(isinstance(e, NpcPresent) for e in events)
     text = "".join(e.text for e in events if isinstance(e, ProseDelta))
     assert text == REPLY
 

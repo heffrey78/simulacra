@@ -5,6 +5,11 @@
 > rule and the cache frequency were cut to keep the median run within one
 > floor, which means **D1 and D2 differ from what was approved.** Findings at
 > the bottom. §§1–5 are the design as reviewed, kept as written.
+>
+> **Since then:** [M14.1](M14.1-fixes-tasks.md) armed floors 1–3, fixing the
+> missing vault found below. That moved the base curve two floors, and the
+> boss's drop rate came down from 50% to 35% to keep loot within one floor of
+> the armed game.
 
 > Scoped from [M13's ledger](M13-open-items-tasks.md): O13 (looting, corpses,
 > drops) and the setup for O14 (weapons with tradeoffs). It also answers the

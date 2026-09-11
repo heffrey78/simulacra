@@ -123,8 +123,10 @@ def test_the_first_ever_run_works_with_an_empty_store(store, theme):
     client = Recording(script=[REPLY])
     events = play(store, theme, seed=42, client=client)
 
+    # Talking re-announces an NPC only when a past run surfaces (M14.1), so on
+    # a cold start there may be no announcement at all -- never a remembering one.
     present = [e for e in events if isinstance(e, NpcPresent)]
-    assert present and not any(e.remembers for e in present)
+    assert not any(e.remembers for e in present)
     assert any("delver says" in p.lower() for p in client.prompts)
 
 

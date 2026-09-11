@@ -111,6 +111,54 @@ _LABELS = {
 }
 
 
+# Authored canon is written without a subject -- "Keeps a plate warm for a
+# shift that ended before the town emptied." -- and under "What is true of
+# you:" a model supplies the subject itself. The third playtest's Widow:
+# "You do keep a plate warm because I am a Widow..." (M14.1). In the first
+# person the data is what the NPC would say: M13's lesson, that a small model
+# reads data back more faithfully than it follows an instruction, for canon.
+_MODALS = frozenset({"will", "would", "can", "could", "shall", "should", "must", "may", "might"})
+_IRREGULAR = {"has": "have", "is": "am", "does": "do", "was": "was"}
+# Sentence-openers that end in "s" and are not verbs.
+_NOT_VERBS = frozenset({"this", "its", "his", "hers", "theirs", "yes", "less",
+                        "always", "sometimes", "perhaps", "thus", "as"})
+
+
+def _first_person(word: str) -> str | None:
+    """A third-person singular verb in the first person, or None if `word`
+    does not look like one."""
+    w = word.lower()
+    if w in _NOT_VERBS:
+        return None
+    if w in _IRREGULAR:
+        return _IRREGULAR[w]
+    if w in _MODALS:
+        return w
+    if len(w) > 3 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if w.endswith(("ches", "shes", "sses", "xes", "zes")):
+        return w[:-2]
+    if len(w) > 2 and w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    return None
+
+
+def as_speaker(text: str) -> str:
+    """Subjectless authored canon in the first person; anything else unchanged.
+
+    The verb after "and" shares the missing subject ("...and does not want to
+    go"), so it turns too. Pronouns do not: "what each delver owes her" stays,
+    which reads as a slip rather than as someone else speaking.
+    """
+    first, _, rest = text.strip().partition(" ")
+    verb = _first_person(first) if first[:1].isupper() else None
+    if verb is None:
+        return text
+    rest = re.sub(r"\band (\w+)", lambda m: "and " + (_first_person(m.group(1)) or m.group(1)),
+                  rest)
+    return f"I {verb} {rest}".rstrip()
+
+
 @dataclass(frozen=True)
 class Fact:
     """One retrieved thing, with a stable identity.
@@ -264,7 +312,11 @@ class Router:
         """
         kinds = ("authored", "derived") if is_warm(self._store, actor.id) else ("authored",)
         rows = self._store.canon(actor.id, provenance=kinds, limit=CANON_LIMIT)
-        return [Fact(f"canon:{r['id']}", r["text"]) for r in rows]
+        # Authored only: derived canon is the canonist's own sentences, and
+        # "Entries for six delvers..." is not a verb waiting for a subject.
+        return [Fact(f"canon:{r['id']}",
+                     as_speaker(r["text"]) if r["provenance"] == "authored" else r["text"])
+                for r in rows]
 
     def _trade(self, state, actor, topic) -> list[Fact]:
         """What they carry, and whether they are in a mood to part with it.

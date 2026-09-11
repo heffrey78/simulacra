@@ -260,7 +260,8 @@ def test_authored_canon_is_never_gated(facing):
     npc = next(n for n in engine.theme.npcs if n.anchor == ARCHIVIST)
 
     texts = [f.text for f in engine._router._self(state, actor, "yourself")]
-    assert npc.canon[0] in texts
+    from simulacra.engine.routes import as_speaker
+    assert as_speaker(npc.canon[0]) in texts
 
 
 # -- A5: following ---------------------------------------------------------

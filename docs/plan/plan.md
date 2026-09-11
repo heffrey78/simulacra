@@ -658,6 +658,32 @@ Two more findings:
   regenerate identically with the loot stream.
 
 
+**M14.1 — Third playtest** ✅ *done* · **[task record →](../tasks/M14.1-fixes-tasks.md)** · **[playtest →](../playtests/2026-09-11.md)**
+This was the first play of M14, and the first genuinely on `qwen3.5:2b`, so it
+also confirmed the `--model` fix. The player fought bare-handed from floor 1
+to floor 4 and died on floor 5: floors 1–3 had never had a vault.
+
+Nine fixes:
+- a vault-less floor gets the vault's weapon, from a stream of its own, so no
+  existing world changes;
+- taking something a search found says it's part of the room;
+- narration no longer comes out of NPCs' mouths ("the Widow: The Widow takes
+  it.");
+- braces are stripped from the 2b's room names;
+- greeting an NPC no longer repeats "is here.";
+- `drink` with one kind of heal just drinks, and a real choice is listed
+  readably;
+- floor 1's name reaches the transcript;
+- subjectless NPC canon reaches the model in the first person;
+- an NPC reading its own instructions back is caught.
+
+**Arming floors 1–3 moved the balance curve from a median of floor 4 to 6.**
+M3's calibration had been made on unarmed early floors, a bug since M1. Loot was
+re-tuned against the armed game, and only the boss's drop rate moved, from 50%
+to 35%. M3's curve tests all still pass. Whether a two-floor-longer game is the
+right length is a design question, and the knobs are M3's.
+
+
 ## 10. State of the repo
 
 Built and verified:

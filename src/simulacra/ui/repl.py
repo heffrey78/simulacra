@@ -15,6 +15,7 @@ from ..engine.events import (
     Damage,
     Event,
     FloorDescended,
+    FloorNamed,
     Improvised,
     ItemTaken,
     Line,
@@ -100,6 +101,13 @@ class ReplRenderer:
                 self.console.print(
                     f"You descend to floor {event.depth}. {event.theme_name}", style="bold"
                 )
+                if event.goal:
+                    self.console.print(event.goal, style="dim")
+
+            case FloorNamed():
+                # The floor a run starts on (M14.1). The REPL ignored it, so
+                # every transcript began with no floor name and no goal.
+                self.console.print(f"Floor {event.depth}. {event.theme_name}", style="bold")
                 if event.goal:
                     self.console.print(event.goal, style="dim")
 

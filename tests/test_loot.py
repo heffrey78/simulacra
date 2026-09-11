@@ -53,10 +53,19 @@ def always_drop(monkeypatch):
 
 
 def shape(floor):
+    """Everything the floor's own stream decides. The loot stream may only add
+    items after these (M14.1: a vault-less floor's weapon)."""
     return {rid: (r.kind, r.name, dict(r.exits),
-                  [(a.id, a.name, a.hp, a.attack, a.defense) for a in r.actors],
-                  [(i.id, i.name, i.damage, i.heal) for i in r.items])
+                  [(a.id, a.name, a.hp, a.attack, a.defense) for a in r.actors])
             for rid, r in floor.rooms.items()}
+
+
+def items_extend(plain, looted) -> bool:
+    return all(
+        [(i.id, i.name, i.damage, i.heal) for i in room.items]
+        == [(i.id, i.name, i.damage, i.heal) for i in looted.rooms[rid].items][:len(room.items)]
+        for rid, room in plain.rooms.items()
+    )
 
 
 # -- L1: a kill can leave something behind ------------------------------------
@@ -97,11 +106,16 @@ def test_a_judge_kill_drops_too(tmp_path, theme, monkeypatch):
 
 def test_the_boss_leaves_something_more_often_than_its_tier(theme):
     """Designed as "always"; measured at two floors of the curve on its own."""
-    boss = mob(archetype="weak", boss=True)
-    rate = sum(loot.drop_for(boss, theme, 3, random.Random(s)) is not None
-               for s in range(400)) / 400
-    assert abs(rate - loot.BOSS_DROP_CHANCE) < 0.08
-    assert rate > max(loot.DROP_CHANCE.values())
+    def rate(tier):
+        boss = mob(archetype=tier, boss=True)
+        return sum(loot.drop_for(boss, theme, 3, random.Random(s)) is not None
+                   for s in range(400)) / 400
+
+    weak = rate("weak")
+    assert abs(weak - loot.BOSS_DROP_CHANCE) < 0.08
+    assert weak > loot.DROP_CHANCE["weak"]
+    # Never below its own tier (M14.1): the boss rate fell under the strong tier's.
+    assert rate("strong") >= loot.DROP_CHANCE["strong"] - 0.08
 
 
 def test_an_npc_leaves_nothing(theme):
@@ -143,6 +157,7 @@ def test_the_loot_stream_does_not_move_the_floor(pack):
             looted = generate_floor(d, theme, floor_rng(ws, d),
                                     loot_rng=floor_rng(ws, d, "loot"))
             assert shape(plain) == shape(looted)
+            assert items_extend(plain, looted)
             assert not any(r.cache for r in plain.rooms.values())
 
 

@@ -16,6 +16,7 @@ MILESTONE M1 (movement) -> M3 (combat) -> M4 (memory).
 from __future__ import annotations
 
 import random
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -287,6 +288,7 @@ class Engine:
         floor = generate_floor(
             self.state.depth, self.theme, floor_rng(self.state.world_seed, self.state.depth),
             loot_rng=floor_rng(self.state.world_seed, self.state.depth, "loot"),
+            vault_rng=floor_rng(self.state.world_seed, self.state.depth, "vault"),
         )
 
         yield from self._establish(floor)
@@ -642,9 +644,15 @@ class Engine:
         # (M12). "A rusted iron key lies in the wall" followed by "There is no
         # key here" was the engine contradicting its own prose, three times in
         # the second playtest.
-        if discovery.grade(target, room, self.theme,
-                           world_seed=self.state.world_seed) == "mentioned":
-            yield Notice(f"The {target} is part of the room, not something you can carry.")
+        # A search's find counts too (M14.1). "The brass scales hang like cold
+        # birdcage traps" followed by "take scales" -> "There is no scales here"
+        # was the engine contradicting itself one command after it spoke.
+        found = self.store.node_data(f"room:{room.id}").get("found") or {}
+        if (discovery.words(target) & set(found)
+                or discovery.grade(target, room, self.theme,
+                                   world_seed=self.state.world_seed) == "mentioned"):
+            # No noun agreement to get wrong: "The scales is" was next.
+            yield Notice("That's part of the room, not something you can carry.")
             return
         yield Notice(f"There is no {target} here.")
 
@@ -679,10 +687,15 @@ class Engine:
             # got "Use what?" for `drink`, then "You aren't carrying water" for
             # `drink water` -- Hardpan's drinks are not called water.
             consuming = raw.split()[:1] in (["drink"], ["eat"], ["consume"], ["quaff"])
-            if len(usable) == 1 and (not needle or consuming):
+            kinds = Counter(i.name for i in usable)
+            # One *kind* of thing, not one thing (M14.1): two canteens is no
+            # choice at all, and asking which was the third playtest's `drink`.
+            if len(kinds) == 1 and (not needle or consuming):
                 item = usable[0]
             elif not needle:
-                names = ", ".join(i.name for i in usable)
+                # Semicolons: Hardpan's names carry commas ("a canteen, still
+                # heavy"), and a comma-joined list of them could not be read.
+                names = "; ".join(f"{n} (×{c})" if c > 1 else n for n, c in kinds.items())
                 yield Notice("Use what?" + (f" You have {names}." if usable else ""))
                 return
             else:
@@ -714,7 +727,7 @@ class Engine:
             self._resolved = True
             dealings.bump(self.store, npc.id, dealings.ATTACK_STEP)
             self._following.discard(npc.id)
-            yield from self._says(npc, "They step back from you, and do not come closer.")
+            yield self._narrate("They step back from you, and do not come closer.")
             yield Line(f"{_cap(npc.name)} will remember that.", style="alert")
             return
 
@@ -813,25 +826,40 @@ class Engine:
         # `past` route. Authored canon is what the NPC is, not what it recalls
         # about this delver, and counting it would light the tag on turn one of
         # a brand new world.
-        yield NpcPresent(
-            npc_id=actor.id, name=actor.name,
-            remembers=any(f.key.startswith("memory:") for f in brief.facts),
-        )
-        yield ProseStart(channel="npc", speaker=actor.name)
+        # Only when there is news: the renderers print this as "X is here.", so
+        # emitting it on every turn repeated the line under every greeting
+        # (M14.1). The room already said who was here.
+        if any(f.key.startswith("memory:") for f in brief.facts):
+            yield NpcPresent(npc_id=actor.id, name=actor.name, remembers=True)
         spoken: list[str] = []
         if brief.spoken:
             # No model call: a refusal a 1.7b invents its way around is not a
             # refusal. See routes.DEFAULT_REFUSAL.
+            yield ProseStart(channel="npc", speaker=actor.name)
             spoken.append(brief.spoken)
             yield ProseDelta(brief.spoken)
+            yield ProseEnd()
         else:
+            # The speaker is announced with the first words, not before them:
+            # a reply every guard rejected is narration, and announcing first
+            # printed it as "the Assayer: They say nothing." (M14.1). Costs no
+            # latency -- the narrator holds its first 48 characters for the
+            # guards either way.
+            started = False
             for piece in self.narrator.npc(persona, line, brief):
                 spoken.append(piece)
+                if not started and piece == self.narrator.SILENT:
+                    yield self._narrate(piece)
+                    continue
+                if not started:
+                    yield ProseStart(channel="npc", speaker=actor.name)
+                    started = True
                 yield ProseDelta(piece)
-        yield ProseEnd()
+            if started:
+                yield ProseEnd()
 
         said = "".join(spoken).strip()
-        if said and said != "They say nothing.":
+        if said and said != self.narrator.SILENT:
             # Only once the reply actually happened. The echo and degeneracy
             # guards can swallow a whole generation, and a fact marked as said
             # after the NPC said nothing is one the player can never hear.
@@ -917,6 +945,16 @@ class Engine:
         yield ProseDelta(text)
         yield ProseEnd()
 
+    @staticmethod
+    def _narrate(text: str) -> Line:
+        """What an NPC *does*, in the narrator's voice (M14.1).
+
+        "They refuse it.", "They fall in behind you.", "The Widow takes it." all
+        went through `_says` and rendered as the NPC's own line -- "the Widow:
+        The Widow takes it." in the third playtest. `_says` is for words.
+        """
+        return Line(text, style="dim")
+
     def _give(self, addressee: str, item_name: str) -> Iterator[Event]:
         """Hand something over. The player's pack is checked in code first --
         whether they are carrying it is not a question for the model."""
@@ -943,7 +981,7 @@ class Engine:
         self._resolved = True
         if dealings.is_wary(self.store, actor.id):
             # Free: M8's rule is that a refusal code can decide is code's job.
-            yield from self._says(actor, "They will not take it from you.")
+            yield self._narrate("They will not take it from you.")
             return
 
         if len(dealings.holdings(self.store, actor.id)) >= loot.HOLD_LIMIT:
@@ -955,7 +993,10 @@ class Engine:
         decision = dealings.decide_gift(persona, item, self.client, self.settings.judge)
         if decision.act != "accept":
             line = decision.reason if dealings.presentable(decision.reason) else ""
-            yield from self._says(actor, line or "They refuse it.")
+            if line:
+                yield from self._says(actor, line)
+            else:
+                yield self._narrate("They refuse it.")
             return
 
         self.state.player.inventory.remove(item)
@@ -966,8 +1007,10 @@ class Engine:
         line = decision.reason if dealings.presentable(decision.reason) else ""
         # Names carry their article ("the Archivist"), so a fallback that starts
         # with one needs the capital putting back.
-        fallback = f"{actor.name} takes it."
-        yield from self._says(actor, line or fallback[0].upper() + fallback[1:])
+        if line:
+            yield from self._says(actor, line)
+        else:
+            yield self._narrate(f"{_cap(actor.name)} takes it.")
         yield Line(f"You give {item.name} to {actor.name}.", style="good")
         yield Transcript(
             summary=f"A delver gave {item.name} to {actor.name} on floor {self.state.depth}.",
@@ -990,7 +1033,7 @@ class Engine:
         self._resolved = True
         rows = dealings.holdings(self.store, actor.id)
         if dealings.is_wary(self.store, actor.id) or not rows:
-            yield from self._says(actor, "They have nothing for you.")
+            yield self._narrate("They have nothing for you.")
             return
 
         decision = dealings.decide_request(
@@ -999,12 +1042,15 @@ class Engine:
         row = dealings.match(decision.object, rows) if decision.act == "give" else None
         if row is None:
             line = decision.reason if dealings.presentable(decision.reason) else ""
-            yield from self._says(actor, line or "They keep what they have.")
+            if line:
+                yield from self._says(actor, line)
+            else:
+                yield self._narrate("They keep what they have.")
             return
 
         taken = dealings.release(self.store, actor.id, row["id"])
         if taken is None:  # lost a race with itself; refuse rather than duplicate
-            yield from self._says(actor, "They keep what they have.")
+            yield self._narrate("They keep what they have.")
             return
 
         self.state.player.inventory.append(Item(
@@ -1012,7 +1058,10 @@ class Engine:
             heal=int(taken.get("heal") or 0), damage=int(taken.get("damage") or 0),
         ))
         line = decision.reason if dealings.presentable(decision.reason) else ""
-        yield from self._says(actor, line or f"They hand you {taken['name']}.")
+        if line:
+            yield from self._says(actor, line)
+        else:
+            yield self._narrate(f"They hand you {taken['name']}.")
         yield Line(f"You take {taken['name']}.", style="good")
 
     def _follow(self, addressee: str) -> Iterator[Event]:
@@ -1029,15 +1078,15 @@ class Engine:
         self._resolved = True
         if actor.id in self._following:
             self._following.discard(actor.id)
-            yield from self._says(actor, "They stop where they are.")
+            yield self._narrate("They stop where they are.")
             return
 
         if not dealings.is_warm(self.store, actor.id):
-            yield from self._says(actor, "They stay where they are.")
+            yield self._narrate("They stay where they are.")
             return
 
         self._following.add(actor.id)
-        yield from self._says(actor, "They fall in behind you.")
+        yield self._narrate("They fall in behind you.")
 
     def _bring_followers(self, from_id: str, to_id: str) -> None:
         """Move anyone walking with the player, and write down where they are.

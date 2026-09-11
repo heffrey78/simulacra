@@ -81,18 +81,26 @@ _STOCK = frozenset({
     "forgotten", "unknown", "lost", "unseen", "shadow", "shadows", "void",
     "oblivion", "abyss", "eternal", "echo", "echoes", "vanished", "doom",
     "despair", "darkness", "whispers", "whispering", "hollowed", "dread",
+    # qwen3.5:2b, third playtest.
+    "nothingness",
 })
 _ROOM_HEADS = frozenset({
     "chamber", "hall", "room", "lair", "shrine", "vault", "descent", "entrance",
     "corridor", "passage", "cavern", "tunnel", "crypt", "sanctum", "den",
     "gateway", "portal",
+    # qwen3.5:2b, third playtest: "{The Start}", "{The Hallway}".
+    "hallway", "start",
 })
+# Template punctuation a model wraps names in. qwen3.5:2b named three rooms of
+# one floor "{The Start}", "{The Hallway}" and "{Nothingness}".
+_WRAPPERS = re.compile(r"[{}\[\]<>]")
 _ARTICLES = frozenset({"the", "a", "an"})
 
 
 def _clean(text: str) -> str:
-    """Strip room ids, and the preposition that introduced them."""
-    text = _ID.sub("", str(text or ""))
+    """Strip room ids, and the preposition that introduced them, and any
+    template braces around the whole."""
+    text = _ID.sub("", _WRAPPERS.sub("", str(text or "")))
     text = re.sub(r"\s+([,.;:])", r"\1", text)
     text = re.sub(r",\s*,", ",", text)
     return re.sub(r"\s{2,}", " ", text).strip(" ,;:")

@@ -40,7 +40,7 @@ closed here with a test that failed first.
 | O15 | Occasional factual drift in derived canon | M7 | **accepted** — bounded by `DERIVED_CAP` |
 | O16 | Summarising old episodic memory | M7 deferred | **open** — no pressure yet |
 | O17 | NPCs asking questions back; multi-turn plans | M8 deferred | **open** |
-| O18 | Floors 1–3 have no vault (slot collision), so no weapon | M14 findings | **open** — a fix re-roles every existing world's rooms |
+| O18 | Floors 1–3 have no vault (slot collision), so no weapon | M14 findings | **fixed** — [M14.1](M14.1-fixes-tasks.md): the weapon, from its own stream, without re-roling rooms |
 
 ---
 

@@ -24,11 +24,13 @@ from ..world.model import Actor, Item
 # both themes.
 DROP_CHANCE = {"weak": 0.15, "normal": 0.25, "strong": 0.4}
 WEAPON_SHARE = 0.3
-# The lair's occupant drops more often than any tier, and leans toward a weapon:
-# floors 1-3 have no vault, so this is where an early weapon comes from. It was
-# going to be "always" -- which on its own cost two floors of the curve, since a
-# heal right after the floor's hardest fight is when a heal is worth most.
-BOSS_DROP_CHANCE = 0.5
+# The lair's occupant drops at least this often, and leans toward a weapon. It
+# was going to be "always" -- which on its own cost two floors of the curve,
+# since a heal right after the floor's hardest fight is when a heal is worth
+# most. M14 shipped 0.5 to arm floors 1-3, which had no vault. M14.1 gave those
+# floors their weapon directly, and that alone moved the base curve two floors;
+# 0.35 is what keeps loot within one floor of the armed game.
+BOSS_DROP_CHANCE = 0.35
 BOSS_WEAPON_SHARE = 0.6
 
 # The last death's pack: the best few things carried. One per world, on a node
@@ -50,7 +52,10 @@ def drop_for(actor: Actor, theme, depth: int, rng: random.Random) -> Item | None
     """What a kill leaves behind, if anything. The run's dice, never the floor's."""
     if not actor.hostile:
         return None
-    chance = BOSS_DROP_CHANCE if actor.boss else DROP_CHANCE.get(actor.archetype, 0.0)
+    tier = DROP_CHANCE.get(actor.archetype, 0.0)
+    # A boss never drops less often than its own tier would: 0.35 is below the
+    # strong tier's rate.
+    chance = max(BOSS_DROP_CHANCE, tier) if actor.boss else tier
     if rng.random() >= chance:
         return None
     share = BOSS_WEAPON_SHARE if actor.boss else WEAPON_SHARE

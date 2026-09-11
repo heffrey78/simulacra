@@ -105,6 +105,23 @@ def looks_degenerate(text: str) -> bool:
     return len(lines) >= 4 and len(set(lines)) * 2 <= len(lines)
 
 
+def recites_itself(text: str, name: str) -> bool:
+    """True when an NPC's reply is its own system prompt read back.
+
+    The prompt opens "You are the Assayer, who...", and the 1.7b answered a
+    greeting with "You are a rogue assayer, unbound by conventional rules" --
+    twice, in the third playtest's first run. No prompt label appears in it, so
+    `looks_like_echo` let it through. An NPC may tell the delver "you are late";
+    it may not tell the delver that *they* are the NPC.
+    """
+    t = _norm(text)
+    if not (t.startswith("you are ") or t.startswith("you're ")):
+        return False
+    own = {w for w in _norm(name).split() if w not in ("the", "a", "an")}
+    opening = set(re.findall(r"[a-z']+", t)[:12])
+    return bool(own & opening)
+
+
 def _as_stream(text: str, size: int = 12) -> Iterator[str]:
     """Replay cached prose as deltas so the renderer path is identical whether
     the text was just generated or came from SQLite."""
@@ -438,7 +455,8 @@ class Narrator:
                 head = "".join(buffer)
                 if len(head) >= GUARD_PREFIX_CHARS:
                     # Dialogue is not immune to the failures room prose had.
-                    if looks_like_echo(head, user, verbatim=False) or looks_degenerate(head):
+                    if (looks_like_echo(head, user, verbatim=False) or looks_degenerate(head)
+                            or recites_itself(head, npc.name)):
                         gen.close()
                         buffer.clear()
                         break
@@ -449,10 +467,15 @@ class Narrator:
 
         if not released:
             text = "".join(buffer).strip()
-            bad = not text or looks_like_echo(text, user, verbatim=False) or looks_degenerate(text)
-            yield "They say nothing." if bad else text
+            bad = (not text or looks_like_echo(text, user, verbatim=False)
+                   or looks_degenerate(text) or recites_itself(text, npc.name))
+            yield self.SILENT if bad else text
 
     NOTHING_FOUND = "Nothing comes of the search."
+    # What an NPC's turn becomes when every guard rejected the reply. It is
+    # narration, and the engine renders it as such (M14.1) -- it once printed
+    # as the NPC's own line: "the Assayer: They say nothing."
+    SILENT = "They say nothing."
 
     def discover(self, target: str, room) -> Iterator[str]:
         """Name what the player turned up. Streamed, guarded, never cached here.
