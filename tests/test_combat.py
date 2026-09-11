@@ -11,6 +11,7 @@ from collections import Counter
 
 import pytest
 
+from simulacra.engine import loot
 from simulacra.engine.combat import (
     BARE_HANDS,
     actors_attack,
@@ -138,8 +139,10 @@ def _use_healing(player: Player) -> bool:
     return False
 
 
-def _fight(player: Player, actors: list[Actor], rng: random.Random) -> bool:
-    """Returns True if the player survives the room. Drinks when badly hurt."""
+def _fight(player: Player, actors: list[Actor], rng: random.Random,
+           drops=None) -> bool:
+    """Returns True if the player survives the room. Drinks when badly hurt.
+    `drops(dead)` is called for each kill, and whatever it returns is taken."""
     for _ in range(80):
         alive = [a for a in actors if a.hp > 0]
         if not alive:
@@ -148,7 +151,9 @@ def _fight(player: Player, actors: list[Actor], rng: random.Random) -> bool:
             pass  # a turn spent healing
         else:
             player_attacks(player, alive[0], rng)
-            clear_dead(actors)
+            for dead in clear_dead(actors):
+                if drops is not None and (item := drops(dead)) is not None:
+                    player.inventory.append(item)
         actors_attack([a for a in actors if a.hp > 0], player, rng)
         if player.hp <= 0:
             return False
@@ -158,29 +163,36 @@ def _fight(player: Player, actors: list[Actor], rng: random.Random) -> bool:
 MAX_DEPTH = 40
 
 
-def simulate_run(seed: int, theme) -> int:
+def simulate_run(seed: int, theme, *, with_loot: bool = True) -> int:
     """Play a whole run greedily and return the depth reached.
 
     A per-floor simulation would be dishonest: the player carries damage,
     inventory and progression between floors, and attrition across floors is
-    what actually ends a run.
+    what actually ends a run. By the same reasoning it plays with loot (M14):
+    it searches every room for its cache and takes what every kill leaves, so
+    the curve these tests guard is the game's, not the game before loot.
     """
     rng = random.Random(seed)
     player = Player()
     depth = 1
     while depth <= MAX_DEPTH:
-        floor = generate_floor(depth, theme, random.Random(seed + depth))
+        floor = generate_floor(
+            depth, theme, random.Random(seed + depth),
+            loot_rng=random.Random(f"{seed}:{depth}:loot") if with_loot else None,
+        )
+        drops = (lambda dead, d=depth: loot.drop_for(dead, theme, d, rng)) if with_loot else None
         for room in floor.rooms.values():
             player.inventory.extend(room.items)
-            if room.actors and not _fight(player, list(room.actors), rng):
+            player.inventory.extend(room.cache)
+            if room.actors and not _fight(player, list(room.actors), rng, drops):
                 return depth
         depth += 1
         player.on_descend(depth)
     return depth
 
 
-def depths(theme, trials: int = 120) -> list[int]:
-    return sorted(simulate_run(s, theme) for s in range(trials))
+def depths(theme, trials: int = 120, *, with_loot: bool = True) -> list[int]:
+    return sorted(simulate_run(s, theme, with_loot=with_loot) for s in range(trials))
 
 
 @pytest.fixture(scope="module")
@@ -226,3 +238,15 @@ def test_progression_is_what_makes_depth_reachable(theme):
 
     with_prog = depths(theme, trials=80)
     assert with_prog[40] > without[40], "progression did not extend runs"
+
+
+@pytest.mark.parametrize("pack", ["simulacra", "hardpan"])
+def test_loot_moves_the_median_run_by_one_floor_at_most(pack):
+    """M14, measured before building: no simulated run dies holding a heal, so
+    supply is not what ends runs, and loot at these rates barely moves the
+    curve. This keeps that true if the rates change."""
+    from simulacra.world.theme import Theme
+    theme = Theme.load(pack)
+    looted = depths(theme, trials=200)
+    bare = depths(theme, trials=200, with_loot=False)
+    assert looted[100] - bare[100] <= 1, f"median {bare[100]} -> {looted[100]}"

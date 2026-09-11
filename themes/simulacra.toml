@@ -87,6 +87,12 @@ weapon  = [["a stuttering blade", 4], ["a copyist's knife", 3]]
 healing = [["a jar of clean water", 6], ["an unspoiled ration", 4]]
 key     = [["a key with no teeth"], ["a seal, half-pressed"]]
 
+# What a thing leaves when it is finished (M14). Optional per tier and per
+# category -- anything not listed drops from [items]. Code decides how often.
+[drops]
+weak.healing  = [["a fold of paper with clean water in it", 3]]
+strong.weapon = [["the Overprint's edge", 5], ["a compound blade", 5]]
+
 [npcs]
 # NPCs persist across runs and accumulate memory. `anchor` is the graph node id.
 #

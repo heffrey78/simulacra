@@ -1,8 +1,10 @@
-# M14 — Looting · 📐 DESIGN, for review
+# M14 — Looting · ✅ COMPLETE
 
-> **Status: designed, nothing built.** The decisions in §4 are yours, and each
-> one has a recommendation. Everything below the decisions assumes the
-> recommendation; change a decision and its task changes with it.
+> **Status: done.** 858 tests green (833 before M14). Built to the design as
+> approved, except where L7's simulation overruled it. The drop rates, the boss
+> rule and the cache frequency were cut to keep the median run within one
+> floor, which means **D1 and D2 differ from what was approved.** Findings at
+> the bottom. §§1–5 are the design as reviewed, kept as written.
 
 > Scoped from [M13's ledger](M13-open-items-tasks.md): O13 (looting, corpses,
 > drops) and the setup for O14 (weapons with tradeoffs). It also answers the
@@ -213,16 +215,21 @@ caches and bones all feed a world-scoped store that a warm NPC can hand back.
 
 ## Definition of done
 
-- [ ] A kill can drop, by every kill path; the boss always does
-- [ ] A bare `search` reveals a cache once; a cache is never listed, summarised or narrated before that
-- [ ] Existing worlds regenerate identically (golden test)
-- [ ] Item values grow with depth and show in `inventory`
-- [ ] `take all` and `loot` work
-- [ ] No NPC holds more than three items
-- [ ] M3's curve tests pass against the loot-aware simulation; median within one floor of today
-- [ ] The last death's pack waits in its room, and only one pack exists per world
-- [ ] No model call anywhere in M14's paths
-- [ ] Measured in a live playtest
+- [x] A kill can drop, by every kill path. The boss drops more often than any
+      tier: 50%, where the design said always
+- [x] A bare `search` reveals a cache once; a cache is never listed, summarised or narrated before that
+- [x] Existing worlds regenerate identically: an 80-floor snapshot, plus a
+      stream test that doesn't depend on the theme files
+- [x] Item values grow with depth and show in `inventory`
+- [x] `take all` and `loot` work
+- [x] No NPC holds more than three items
+- [x] M3's curve tests pass against the loot-aware simulation; the median
+      moves from floor 4 to 5
+- [x] The last death's pack waits in its room, and only one pack exists per world
+- [x] No model call anywhere in M14's paths: tested offline, and the NPC-cap
+      test counts calls
+- [x] Played end to end, scripted and offline, since loot needs no model. A
+      human playtest is still to come
 
 ## Watch for
 
@@ -235,3 +242,96 @@ caches and bones all feed a world-scoped store that a warm NPC can hand back.
   and the golden test proves it.
 - **Node blobs replaced rather than merged.** Bones share `room:` node data with
   `found`. That makes four bugs of this shape so far, and it would be a fifth.
+
+---
+
+## Findings
+
+### The design failed its own bound, and L7 is why we know
+
+§2 warned that three of the proposals had never been simulated. Simulated
+together, the whole design moved the median run **from floor 4 to floor 7** on
+both themes. Isolated, 200 runs each:
+
+| loot | median floor |
+|---|---|
+| none | 4 |
+| caches only (20% of eligible rooms) | 5 |
+| drops only, boss at its tier's rate | 5 |
+| **the boss always drops, nothing else** | **6** |
+| everything, as designed | 7 |
+
+Weapons were not the driver. A boss whose drop was always a heal moved the
+curve exactly as far as one leaning toward a weapon. Each source alone was worth
+a floor or two, and together they pushed runs up to the wall around floors 7–8,
+where the strong tier arrives: p90 was 7–8 in every configuration, and the
+maximum 9. The boss rule was the costliest single choice. A heal right after
+the floor's hardest fight, every floor, is exactly when a heal is worth most.
+
+### What shipped
+
+This is the most generous point on a grid of nine that held the bound on both
+themes, at 200 and 400 runs:
+
+| | designed | shipped |
+|---|---|---|
+| drops, weak / normal / strong | 25 / 40 / 60% | **15 / 25 / 40%** |
+| the lair boss | always drops | **50%**, and still leaning toward a weapon |
+| caches | 20% of eligible rooms, ~0.8 a floor | **10%, ~0.4 a floor** |
+| median run (4 without loot) | 7 | **5** |
+
+**Decisions D1 and D2 changed from what you approved.** The bound you approved
+along with them decided it. Of the grid, the closest to the approved rates was
+the designed drop rates with 10% caches and no boss rule. It held on simulacra
+and broke on Hardpan at 200 runs, where the median reached 6.
+
+### Floors 1–3 have no vault
+
+I found this while looking for the driver. On floors of 5–6 rooms the vault's
+slot and the shrine's slot are the same room, and the shrine wins. So floors
+1–3 have no vault and no weapon: every run fights bare-handed until floor 4,
+unless something drops. §1 of this doc said every floor has one weapon, which
+was wrong for the first three.
+
+It's not fixed here. Changing which room gets which role changes the rooms of
+every existing world, whose stored names and concepts were written for the old
+roles. It's recorded as M13 ledger item O18. The boss's lean toward a weapon is
+what M14 does about it.
+
+### Existing worlds regenerate as they were
+
+I snapshotted 80 floors before any M14 edit: both themes, four world seeds,
+depths 1–10. Every one regenerates identically, with the loot stream and
+without: layout, names, monsters and item ids. Only item values moved, and
+each by exactly the designed scale. `test_the_loot_stream_does_not_move_the_floor`
+keeps it that way without depending on the theme files.
+
+### Deviations from the design
+
+- **Bones live on their own node, `bones:last`,** not the room node. One pack
+  per world becomes structural, and the room's blob keeps a single writer.
+- **The inventory says *"(damage 5)"*, not *"hits for 5"*.** A weapon's number
+  is the base of a damage roll (1 to base + 2), not a hit.
+- **`loot the offcut`** used to say *"it left nothing behind"* (M11), because
+  the dead carried nothing. Now they can, so `loot` takes what lies here,
+  named or not.
+
+### Played end to end
+
+Loot is tier 0, so all of it can be played without a model. I scripted a
+greedy player on fresh Hardpan worlds: walk every room, fight, `search`,
+`take all`, descend.
+
+- **Kills dropped, searches found caches, `take all` took both.** For example:
+  *"a dry hand is finished. It leaves behind a canteen, still heavy."* and
+  *"You turn up a tin of peaches."*
+- **Eight lives in one world.** The pack moved with each death: floors 5, 3,
+  2, 3, 2, 5, 4, 5. Run 8 found it on floor 4, where run 7 died, and emptied
+  it.
+- **Bones reward getting back as deep as the last delver, which is rarer than
+  it sounds.** Five of those lives had a full pack waiting, and one reached it.
+- **Worth deciding after playing: two deaths carrying nothing left an empty
+  pack, wiping a full one.** That is the design, since the pack is the last
+  delver's rather than the best there has been. But it makes a pack fleeting.
+  Keeping the old pack when the new death carries nothing is one line to
+  change.

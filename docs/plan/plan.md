@@ -630,18 +630,32 @@ model paired `defend` with `affects: enemy` every time, so `defend` becomes the
 player's guard whoever the ruling names.
 
 
-**M14 — Looting** 📐 *designed, awaiting review* · **[design and tasks →](../tasks/M14-looting-tasks.md)**
-Fights and searches pay off in things you carry. A kill can leave something
-behind, a search can turn up a cache the world hid, deeper finds are worth more,
-and the last delver's pack waits where they died. All of it is tier 0: the
-model never names or invents loot.
+**M14 — Looting** ✅ *done* · **[task record →](../tasks/M14-looting-tasks.md)**
+Fights and searches pay off in things you carry:
+- a kill can leave something behind;
+- a bare `search` can turn up a cache the world hid;
+- deeper finds are worth more, and `inventory` shows their values;
+- `take all` and `loot` work;
+- an NPC holds three things at most;
+- the last delver's pack waits where they died.
 
-M10 held off looting as a balance risk without numbers, so M14 starts with
-them. M3's balance simulation with loot policies added: at the proposed rates the
-median run doesn't move, and **no run dies holding a heal** — the curve is set
-by the monster tiers, not by supply. It takes a heal on every kill, or two
-points of defense, to buy one floor. Five decisions await review: drop rates,
-hidden caches, depth-scaled values, bones, and a cap on NPC holdings.
+All of it is tier 0: the model never names or invents loot.
+
+M10 held off looting as a balance risk without numbers, so M14 started with
+them, and then the simulation overruled the design. Each part of loot had
+looked safe on its own. Together they moved the median run from floor 4 to 7,
+up to the wall where the strong tier arrives. The boss that always dropped cost
+two floors by itself.
+
+M14 shipped at the most generous rates that hold the median within one floor on
+both themes: drops at 15/25/40%, the boss at 50%, and caches at about 0.4 a
+floor. `test_combat.py` now simulates the game with loot in it.
+
+Two more findings:
+- **Floors 1–3 have never had a vault.** Two room slots collide there, so no
+  run found a weapon before floor 4.
+- **Existing worlds are unchanged.** 80 floors snapshotted before M14
+  regenerate identically with the loot stream.
 
 
 ## 10. State of the repo

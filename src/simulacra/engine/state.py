@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from ..world.floorgen import floor_rng, generate_floor
 from ..world.model import Floor, Player
+from .loot import pack_on
 
 
 @dataclass
@@ -211,6 +212,24 @@ def place_npcs(store, floor, theme) -> None:
     store.commit()
 
 
+def place_bones(store, floor) -> bool:
+    """Put the last delver's pack where they fell, if that was on this floor (M14).
+
+    The first item state to outlive a run. It lives on its own node rather than
+    the room's, whose blob already carries M10's `found` index: two writers
+    sharing one blob is the shape of four bugs so far.
+    """
+    found = pack_on(store, floor.depth)
+    if found is None:
+        return False
+    room_id, items = found
+    room = floor.rooms.get(room_id)
+    if room is None:
+        return False
+    room.items.extend(items)
+    return True
+
+
 def new_run(store, theme, settings, seed: int | None = None) -> GameState:
     """Open a run against an existing world: allocate the run row, build floor 1.
 
@@ -228,8 +247,10 @@ def new_run(store, theme, settings, seed: int | None = None) -> GameState:
     ensure_npcs(store, theme)
 
     run_id = store.start_run(theme.name, seed=run_seed)
-    floor = generate_floor(1, theme, floor_rng(world_seed, 1))
+    floor = generate_floor(1, theme, floor_rng(world_seed, 1),
+                           loot_rng=floor_rng(world_seed, 1, "loot"))
     place_npcs(store, floor, theme)
+    place_bones(store, floor)
 
     return GameState(
         run_id=run_id,

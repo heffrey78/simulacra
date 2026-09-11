@@ -80,6 +80,8 @@ class Actor:
     defense: int = 10
     hostile: bool = True
     archetype: str = ""
+    # The lair's occupant. Always leaves something behind (M14).
+    boss: bool = False
     # Populated by the memory layer at encounter time, not at generation time.
     recollections: list[str] = field(default_factory=list)
 
@@ -92,6 +94,9 @@ class Room:
     exits: dict[Direction, str] = field(default_factory=dict)
     items: list[Item] = field(default_factory=list)
     actors: list[Actor] = field(default_factory=list)
+    # Hidden until a bare `search` (M14). A separate list rather than a flag on
+    # items: everything that must not see a cache reads `items` and nothing else.
+    cache: list[Item] = field(default_factory=list)
 
     # Set by the director (tier 3, once per floor) -- a short concept the
     # narrator expands. Cheap to generate, cheap to store, keeps rooms distinct.

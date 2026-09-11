@@ -55,7 +55,7 @@ def _tier_for(depth: int, rng: random.Random) -> str:
     return tier
 
 
-def floor_rng(world_seed: int, depth: int) -> random.Random:
+def floor_rng(world_seed: int, depth: int, stream: str = "") -> random.Random:
     """The one stream that decides what depth `depth` looks like in this world.
 
     Both call sites (`new_run` for floor 1, `descend` for the rest) go through
@@ -67,11 +67,18 @@ def floor_rng(world_seed: int, depth: int) -> random.Random:
     Seeded from a string rather than `world_seed ^ depth` so adjacent depths
     don't differ by a single bit. `Random(str)` hashes with SHA-512 internally,
     so this is stable across processes and unaffected by PYTHONHASHSEED.
+
+    `stream` names a separate sequence for the same floor (M14: "loot"). New
+    kinds of content must never draw from the floor's own stream: one extra
+    draw there regenerates every existing world's monsters and vault items.
+    The unnamed stream's seed string is unchanged, so worlds made before M14
+    are still the worlds they were.
     """
-    return random.Random(f"{world_seed}:{depth}")
+    return random.Random(f"{world_seed}:{depth}" + (f":{stream}" if stream else ""))
 
 
-def generate_floor(depth: int, theme: Theme, rng: random.Random | None = None) -> Floor:
+def generate_floor(depth: int, theme: Theme, rng: random.Random | None = None,
+                   loot_rng: random.Random | None = None) -> Floor:
     rng = rng or random.Random(depth)
     size = min(5 + depth // 2, 12)
 
@@ -120,6 +127,10 @@ def generate_floor(depth: int, theme: Theme, rng: random.Random | None = None) -
     # 3. Contents. Difficulty is code's call, names are the theme's.
     _populate(rooms, depth, theme, rng)
     _place_npcs(rooms, spine[0], depth, theme)
+    # 4. Caches (M14), from their own stream and after everything else, so
+    #    they cannot move a single draw the floor made before they existed.
+    if loot_rng is not None:
+        _hide_caches(rooms, depth, theme, loot_rng)
     return Floor(depth=depth, rooms=rooms, entrance_id=spine[0])
 
 
@@ -204,17 +215,56 @@ def _monster(theme: Theme, tier: str, depth: int, rng: random.Random, *, boss: b
     return Actor(
         id=f"mob:{rng.randrange(1 << 30):x}", name=name, archetype=tier,
         hp=int(hp * scale * mult), max_hp=int(hp * scale * mult),
-        attack=int(atk * mult), defense=dfn,
+        attack=int(atk * mult), defense=dfn, boss=boss,
     )
 
 
-def _item(theme: Theme, cat: str, depth: int, rng: random.Random) -> Item:
-    pool = theme.items.get(cat) or [["a nondescript thing", 0]]
-    entry = rng.choice(pool)
+# An item is worth more the deeper it was found (M14). A heal keeps pace with
+# max hp, which grows 3 a floor, and a deep weapon is worth picking up at all --
+# before this, every weapon in the game hit for 3 or 4. Floor 1 values are the
+# theme's own. Values only, no draws: existing worlds generate the same items,
+# with deeper numbers.
+ITEM_SCALE = 0.08
+
+# Hidden caches (M14), in rooms a search is plausible in: about one every two or
+# three floors. The design's 0.2 (about one a floor) cost a floor of the balance
+# curve on its own; see the M14 findings.
+CACHE_CHANCE = 0.1
+CACHE_WEAPON_SHARE = 0.3
+_CACHE_KINDS = frozenset({RoomKind.CHAMBER, RoomKind.CORRIDOR, RoomKind.SHRINE})
+
+
+def scaled(value: int, depth: int) -> int:
+    return round(value * (1 + depth * ITEM_SCALE))
+
+
+def make_item(pool, cat: str, depth: int, rng: random.Random) -> Item:
+    """One item from a theme pool -- the only way an item comes into being.
+
+    Drops and caches (M14) come through here too, which is what keeps "the
+    model never names or invents loot" true by construction. Draw order is the
+    pre-M14 `_item`'s: choice, then id.
+    """
+    entry = rng.choice(pool or [["a nondescript thing", 0]])
     name = entry[0]
-    val = entry[1] if len(entry) > 1 else 0
+    val = scaled(int(entry[1]), depth) if len(entry) > 1 else 0
     return Item(
         id=f"item:{rng.randrange(1 << 30):x}", name=name, tags=(cat,),
         damage=val if cat == "weapon" else 0,
         heal=val if cat == "healing" else 0,
     )
+
+
+def _item(theme: Theme, cat: str, depth: int, rng: random.Random) -> Item:
+    return make_item(theme.items.get(cat), cat, depth, rng)
+
+
+def _hide_caches(rooms: dict[str, Room], depth: int, theme: Theme, rng: random.Random) -> None:
+    """Things a bare `search` turns up. Kept out of `room.items`, which is what
+    the room listing, the parser fallback's summary and the narrator read -- so
+    a cache is hidden from all three by construction, not by filtering."""
+    for rid in sorted(rooms):
+        room = rooms[rid]
+        if room.kind in _CACHE_KINDS and rng.random() < CACHE_CHANCE:
+            cat = "weapon" if rng.random() < CACHE_WEAPON_SHARE else "healing"
+            room.cache.append(make_item(theme.items.get(cat), cat, depth, rng))

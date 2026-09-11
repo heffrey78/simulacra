@@ -52,9 +52,9 @@ from .combat import (
 )
 from .judge import adjudicate, apply_verdict
 from .parser import _ADDRESS_WORDS, _TOPIC_WORDS, infer, parse
-from . import dealings
+from . import dealings, loot
 from .routes import Router
-from .state import load_floor_identity, persist_floor, place_npcs
+from .state import load_floor_identity, persist_floor, place_bones, place_npcs
 
 # Read-side caps on canon. The write side caps too (an NPC accumulates canon
 # across a world's lifetime), but the prompt is the thing that actually breaks,
@@ -285,11 +285,13 @@ class Engine:
         # Never `state.rng`: that is the dice stream, and generating from it
         # made floor N depend on how the player fought on floor N-1.
         floor = generate_floor(
-            self.state.depth, self.theme, floor_rng(self.state.world_seed, self.state.depth)
+            self.state.depth, self.theme, floor_rng(self.state.world_seed, self.state.depth),
+            loot_rng=floor_rng(self.state.world_seed, self.state.depth, "loot"),
         )
 
         yield from self._establish(floor)
         place_npcs(self.store, floor, self.theme)
+        place_bones(self.store, floor)
 
         # Set the floor before entering: _enter_room reads state.floor.
         self.state.floor = floor
@@ -477,6 +479,16 @@ class Engine:
         self._resolved = True
         nothing = Notice("You find nothing more here.")
 
+        # A cache first (M14): the one thing a search turns up that you can
+        # carry. Placed by the world, never by the model -- so it comes before
+        # the narrator check, and a search finds it offline too.
+        if room.cache:
+            for item in room.cache:
+                room.items.append(item)
+                yield Line(f"You turn up {item.name}.", style="good")
+            room.cache.clear()
+            return
+
         if self.narrator is None:
             yield nothing
             return
@@ -506,13 +518,18 @@ class Engine:
 
     def _search_verb(self, target: str, raw: str = "") -> Iterator[Event]:
         """`search`, `rummage`, `loot`."""
-        if raw.split()[:1] == ["loot"] and target:
+        if raw.split()[:1] == ["loot"]:
             room = self.state.room
+            # `loot` loots (M14). What a kill leaves lies with everything else
+            # and is not named after the thing that left it, so `loot the
+            # offcut` takes what is here to take, named or not.
+            if room.items:
+                yield from self._take_all()
+                return
             wanted = discovery.words(target)
-            here = [*room.items, *room.actors]
-            if not any(wanted & discovery.words(x.name) for x in here):
-                # The dead are removed when they fall, and carry nothing. Say so
-                # rather than search the walls, which is what this used to do.
+            if target and not any(wanted & discovery.words(a.name) for a in room.actors):
+                # Nothing on the floor, and nobody by that name. Say so rather
+                # than search the walls, which is what this once did.
                 yield Notice("Whatever that was, it left nothing behind to take.")
                 return
         if target:
@@ -611,13 +628,14 @@ class Engine:
 
         room = self.state.room
         needle = target.lower()
+        if needle.strip() in loot.ALL_WORDS:
+            yield from self._take_all()
+            return
         # Substring match: players type "take water", not the full item name.
         for item in room.items:
             if needle in item.name.lower():
-                room.items.remove(item)
-                self.state.player.inventory.append(item)
                 self._resolved = True
-                yield ItemTaken(item=item.name)
+                yield self._pick_up(item)
                 return
 
         # Something the room's own text describes, but not something to carry
@@ -629,6 +647,24 @@ class Engine:
             yield Notice(f"The {target} is part of the room, not something you can carry.")
             return
         yield Notice(f"There is no {target} here.")
+
+    def _pick_up(self, item) -> ItemTaken:
+        self.state.room.items.remove(item)
+        self.state.player.inventory.append(item)
+        if loot.BONES_TAG in item.tags:
+            # Out of the world's pack as well as the room: a taken pack is gone.
+            loot.take_from_pack(self.store, item.id)
+        return ItemTaken(item=item.name)
+
+    def _take_all(self) -> Iterator[Event]:
+        """`take all`, and `loot` when there is something to loot (M14)."""
+        items = list(self.state.room.items)
+        if not items:
+            yield Notice("There is nothing here to take.")
+            return
+        self._resolved = True
+        for item in items:
+            yield self._pick_up(item)
 
     def _use(self, target: str, raw: str = "") -> Iterator[Event]:
         player = self.state.player
@@ -693,8 +729,7 @@ class Engine:
 
         self._resolved = True
         yield from player_attacks(self.state.player, victim, self.state.rng)
-        for dead in clear_dead(room.actors):
-            yield Line(f"{dead.name} is finished.", style="good")
+        yield from self._bury()
 
     def _improvise(self, action: str) -> Iterator[Event]:
         if self.client is None:
@@ -711,8 +746,22 @@ class Engine:
         self._resolved = True
         self.state._last_action = action
         yield from apply_verdict(verdict, self.state, self.state.rng)
-        for dead in clear_dead(self.state.room.actors):
+        yield from self._bury()
+
+    def _bury(self) -> Iterator[Event]:
+        """Every kill ends here (M14), whichever verb made it.
+
+        Two paths kill -- `_attack`, and a judge ruling of `damage_target` -- and
+        a drop written into only one would be missing from the other: the
+        recurring bug shape, a behaviour written for its first caller.
+        """
+        room = self.state.room
+        for dead in clear_dead(room.actors):
             yield Line(f"{dead.name} is finished.", style="good")
+            item = loot.drop_for(dead, self.theme, self.state.depth, self.state.rng)
+            if item is not None:
+                room.items.append(item)
+                yield Line(f"It leaves behind {item.name}.", style="good")
 
     # -- talking -----------------------------------------------------------
 
@@ -897,6 +946,12 @@ class Engine:
             yield from self._says(actor, "They will not take it from you.")
             return
 
+        if len(dealings.holdings(self.store, actor.id)) >= loot.HOLD_LIMIT:
+            # Free, like the wary refusal. Holdings are world-scoped and a warm
+            # NPC can hand them back; uncapped, an NPC is a bank (M14).
+            yield from self._says(actor, "My hands are full.")
+            return
+
         decision = dealings.decide_gift(persona, item, self.client, self.settings.judge)
         if decision.act != "accept":
             line = decision.reason if dealings.presentable(decision.reason) else ""
@@ -1050,6 +1105,9 @@ class Engine:
                 epitaph = ""
 
         self._record_death(cause)
+        # The pack stays where they fell, for whoever comes next (M14).
+        loot.leave_pack(self.store, room_id=self.state.room_id, depth=self.state.depth,
+                        run_id=self.state.run_id, inventory=self.state.player.inventory)
         yield Transcript(
             summary=(f"A delver was killed by {cause} on floor {self.state.depth}, "
                      f"after {self.state.turns} turns."),
@@ -1099,7 +1157,7 @@ class Engine:
             return
         yield Line("You carry:", style="dim")
         for item in inv:
-            yield Line(f"  {item.name}")
+            yield Line(f"  {item.name}{loot.describe(item)}")
 
     # -- shared ------------------------------------------------------------
 
@@ -1205,6 +1263,8 @@ class Engine:
             else:
                 yield NpcPresent(npc_id=actor.id, name=actor.name,
                                  remembers=bool(actor.recollections))
+        if any(loot.BONES_TAG in i.tags for i in room.items):
+            yield Line("A delver's pack lies here, where they fell.", style="alert")
         for item in room.items:
             yield Line(f"You see {item.name}.", style="good")
 

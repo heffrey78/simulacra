@@ -83,6 +83,9 @@ class Theme:
     rooms: dict[str, list[str]] = field(default_factory=dict)
     monsters: dict[str, list[list]] = field(default_factory=dict)
     items: dict[str, list[list]] = field(default_factory=dict)
+    # What a monster of each tier leaves behind, by category (M14). Optional per
+    # tier and per category; anything missing drops from `items`.
+    drops: dict[str, dict[str, list[list]]] = field(default_factory=dict)
     # Things plausibly found in a room of each kind, beyond whatever the
     # director happened to mention. Structure is code's; names are the
     # theme's -- the same rule as `rooms` and `monsters`.
@@ -143,6 +146,7 @@ class Theme:
             rooms=d.get("rooms", {}),
             monsters=d.get("monsters", {}),
             items=d.get("items", {}),
+            drops=d.get("drops", {}),
             fixtures=d.get("fixtures", {}),
             roles=d.get("roles", {}),
             floor_name=d.get("director", {}).get("floor_name", ""),
