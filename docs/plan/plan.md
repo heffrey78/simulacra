@@ -683,6 +683,13 @@ re-tuned against the armed game, and only the boss's drop rate moved, from 50%
 to 35%. M3's curve tests all still pass. Whether a two-floor-longer game is the
 right length is a design question, and the knobs are M3's.
 
+---
+
+**What's next lives in the [roadmap](../roadmap.md).** Every open item from the
+milestones above is there, with ideas and pending decisions, each with a
+permanent `R` number. A milestone picked from it gets a task doc and an entry
+here when it's done.
+
 
 ## 10. State of the repo
 
