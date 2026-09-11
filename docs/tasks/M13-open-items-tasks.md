@@ -35,8 +35,8 @@ closed here with a test that failed first.
 | O10 | TUI text can't be selected or copied | playtest 1 | closed by M11 — every run writes a transcript |
 | O11 | Hearsay repeated without attribution | M7 | closed by M8 — attribution is in the data |
 | O12 | The model's own tics: *something, thick, scent* | M12 | **open** — see below |
-| O13 | Looting, corpses, drops | M10, M11 | **open** — its own milestone |
-| O14 | Weapons with tradeoffs | M11 | **open** — waits on O13 |
+| O13 | Looting, corpses, drops | M10, M11 | **designed** — [M14](M14-looting-tasks.md) |
+| O14 | Weapons with tradeoffs | M11 | **open** — M14's depth-scaled values set it up |
 | O15 | Occasional factual drift in derived canon | M7 | **accepted** — bounded by `DERIVED_CAP` |
 | O16 | Summarising old episodic memory | M7 deferred | **open** — no pressure yet |
 | O17 | NPCs asking questions back; multi-turn plans | M8 deferred | **open** |
