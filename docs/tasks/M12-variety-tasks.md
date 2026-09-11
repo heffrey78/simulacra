@@ -172,6 +172,16 @@ recorded the model overshooting that since M2. Less to riff on — one mood, no
 motif list, a role described rather than named — reads as less to pad with.
 The per-1,000-word rates above keep the comparison fair despite it.
 
+### Old worlds needed the rule on the way out, too
+
+Found writing the report, after the first commit. The mood rule ran on the
+director's output, so it protected every floor directed from M12 on — but a
+world made before M12 stores its motifs as objects in particular rooms, and they
+came back from the graph unfiltered. The narrator now applies the same rule when
+it reads them, falling back to the theme's own moods when nothing survives.
+Without it, the Hardpan world being played at the time would still have put *"a
+hollow statue in the lair"* into a room that wasn't the lair.
+
 ### What M12 does not fix
 
 - **The model's own tics.** `something`, `thick`, `scent`, `forgotten` still

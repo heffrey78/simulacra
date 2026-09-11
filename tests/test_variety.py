@@ -278,3 +278,19 @@ def test_a_numbered_repeat_is_still_a_repeat(dodge):
     apply_floor_plan(floor, plan(floor, theme_name=dodge), theme=theme,
                      used_names=["Erebus's Veil"])
     assert floor.theme_name == "The Second Impression"
+
+
+def test_an_old_worlds_object_motifs_are_filtered_on_read(tmp_path):
+    """Worlds made before M12 stored motifs like "A hollow statue in the lair".
+    The mood rule ran only on the director's output, so they came back from the
+    graph as one-per-room moods -- still objects, still in the wrong rooms."""
+    theme = Theme.load("hardpan")
+    floor = floor_of(theme)
+    narrator = narrator_for(theme, tmp_path)
+
+    floor.motifs = ("A rusted ladder leading to the entrance", "A hollow statue in the lair",
+                    "damp")
+    assert {narrator._mood(floor, r) for r in floor.rooms.values()} == {"damp"}
+
+    floor.motifs = ("A hollow statue in the lair",)
+    assert all(narrator._mood(floor, r) in theme.motifs for r in floor.rooms.values())

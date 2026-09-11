@@ -170,8 +170,17 @@ class Narrator:
         ]
 
     def _mood(self, floor: Floor, room: Room) -> str:
-        """This room's one mood: the floor's, rotated by room, else the theme's."""
-        pool = list(floor.motifs) or list(self._theme.motifs)
+        """This room's one mood: the floor's, rotated by room, else the theme's.
+
+        The floor's motifs pass the director's mood rule on the way *in* since
+        M12 -- but worlds made before M12 stored them as objects in particular
+        rooms ("A hollow statue in the lair"), and those come back from the
+        graph unfiltered. Same rule on the way out, so an old world stops
+        putting the lair's statue in another room too.
+        """
+        from ..world.director import _mood as as_mood
+
+        pool = [m for m in (as_mood(x) for x in floor.motifs) if m] or list(self._theme.motifs)
         if not pool:
             return ""
         order = sorted(floor.rooms)
