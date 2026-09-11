@@ -1,0 +1,121 @@
+# A theme pack. Same contract as simulacra: the engine still knows nothing
+# about setting. Swap with `SIMULACRA_THEME=hardpan`.
+#
+# The conceit: the dungeon is a silver mine that never got the news. The town
+# above it is gone, the company is gone, the payroll stopped -- and the shift
+# is still working. Descent is literal here, which the level generator gets for
+# free: levels are levels.
+#
+# Mining vocabulary is doing the same job the copy/print vocabulary does in
+# simulacra. Drifts, stopes, winzes and adits are real words for real holes,
+# so a 1.7b model that has seen any western at all stays oriented without
+# being told what the setting is.
+
+name = "Hardpan"
+tagline = "A mine that kept digging after the town above it died."
+
+[voice]
+# Two sentences. Do not grow this.
+system = """You narrate a silver mine still being worked after the town above it \
+emptied. Write in second person, present tense. Be concrete and sensory; never \
+explain the metaphor. Two sentences."""
+
+# The ban list matters more here than in simulacra. Ask a small model for a
+# western and it will hand you tumbleweeds and squinting until you stop it.
+motifs = ["dust", "thirst", "rust", "debt", "brands", "tallow", "played-out", "still-owed"]
+banned = ["dusty", "grizzled", "tumbleweed", "sun-baked", "the wind whispers", "wild west", "partner"]
+
+[director]
+# Tier-3, once per level. A working identity -- what was dug here, and how it
+# failed -- gets better rooms than "a spooky mine".
+system = """You design one level of a mine that outlived the town that dug it. \
+Give it a specific working identity: what was taken out, and how it went wrong. \
+Be terse."""
+
+[judge]
+# Tier-1. Unchanged in spirit; the referee is genre-blind on purpose.
+system = """You are a strict, fair referee. Decide if the action is physically \
+plausible given the room. Prefer allowing clever actions. Be terse."""
+
+# -- name pools ------------------------------------------------------------
+
+[rooms]
+entrance = ["the Headframe", "Adit Number One", "the Mouth"]
+corridor = ["a drift", "a crosscut", "the rat hole", "a haulage way"]
+chamber  = ["a stope", "the mucking floor", "the powder magazine", "the assay bench"]
+vault    = ["the Strongbox", "the Payroll Cage", "the High-Grade"]
+lair     = ["the Sump", "a caved stope", "where the mule went down"]
+shrine   = ["the Mother Lode", "the Glory Hole", "the Wet Vein"]
+descent  = ["the ladderway", "an ore chute", "the winze", "the next level"]
+
+[monsters]
+# Code balances, theme names. The strong tier is all company, which is the
+# joke: nothing down here hits harder than someone collecting.
+weak   = [["a dry hand", 6, 2, 10], ["a tommyknocker", 5, 2, 9], ["a claim rat", 7, 1, 10]]
+normal = [["a mucker on late shift", 12, 3, 12], ["the shift boss", 14, 3, 11]]
+strong = [["a Pinkerton, still deputized", 22, 5, 14], ["the Company Man", 26, 6, 13]]
+
+# Looking at a noun the room's own prose used always finds something. These are
+# the fallbacks -- what a hole of this kind plausibly has in it regardless.
+[fixtures]
+entrance = ["the tag board", "a boot scraper", "the hoist cable", "a nailed-up notice"]
+corridor = ["timbering", "a rail", "the ore car", "a candle stub"]
+chamber  = ["the powder box", "muck piles", "a drill steel", "the assay scales"]
+vault    = ["the cage", "a strapped chest", "pay envelopes", "a company seal"]
+lair     = ["standing water", "bones", "harness", "scratch marks"]
+shrine   = ["the face", "quartz", "left offerings", "a scratched date"]
+descent  = ["the ladder", "the chute mouth", "a landing", "handprints"]
+
+[items]
+weapon  = [["a bent single-jack", 4], ["a hogleg with two loads", 3]]
+healing = [["a canteen, still heavy", 6], ["a tin of peaches", 4]]
+key     = [["a brass tag off the board"], ["a blasting key, worn smooth"]]
+
+[npcs]
+# Same rules as simulacra: `canon` is authored, stable, never rewritten, and is
+# the only seed derived canon grows from. One short sentence each.
+#
+# The three of them disagree about who is owed what. That disagreement is the
+# cheapest source of conversational content in the pack -- ask any of them
+# about another and you get an opinion without paying for a concept.
+
+[[npcs.roster]]
+anchor = "npc:assayer"
+name = "the Assayer"
+role = "weighs what you bring up and tells you what it is worth"
+voice = "Transactional and precise. Speaks in weights, fractions and dollars per ton, and will not be drawn off the number."
+depth = 1
+refusal = "That don't weigh."
+repeat = "Already run that sample."
+canon = [
+  "Has not been paid since the mail stopped coming up the grade.",
+  "Buys anything by weight and nothing by story.",
+]
+
+[[npcs.roster]]
+anchor = "npc:widow"
+name = "the Widow"
+role = "keeps the boarding house on the third level"
+voice = "Warm and hospitable, and keeps a running total. Treats every delver as a boarder behind on rent."
+depth = 3
+refusal = "That's not a thing I board."
+repeat = "I told you that over supper."
+canon = [
+  "Keeps a plate warm for a shift that ended before the town emptied.",
+  "Remembers exactly what each delver owes her, and says so kindly.",
+  "Does not believe the Assayer's scales are honest.",
+]
+
+[[npcs.roster]]
+anchor = "npc:powder-monkey"
+name = "the Powder Monkey"
+role = "sets the charges nobody else will go near"
+voice = "Fast, cheerful, and always counting down from ten. Never reaches one, and never seems bothered by it."
+depth = 5
+refusal = "Ain't got a charge for that."
+repeat = "Said it. Said it already. Nine."
+canon = [
+  "Has never been above the fourth level and does not want to go.",
+  "Claims to have heard the bottom answer back.",
+  "Owes the Widow for a winter of suppers and intends to pay in silver.",
+]
