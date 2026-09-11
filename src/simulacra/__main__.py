@@ -151,7 +151,9 @@ def build_session(args, settings: Settings, theme: Theme) -> Session:
     # One file per run, beside the world it belongs to (M11).
     transcript = TranscriptWriter(
         settings.db_path.parent / "transcripts"
-        / f"{settings.db_path.stem}-run{state.run_id}.txt"
+        # By world as well as run (M11.1): run numbers restart with each new
+        # world, and three worlds' runs appended into one file.
+        / f"{settings.db_path.stem}-{state.world_seed}-run{state.run_id}.txt"
     )
     return Session(settings, theme, store, state, engine, memory, client, prefetcher,
                    canon=not args.no_canon, transcript=transcript)

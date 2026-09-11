@@ -225,7 +225,7 @@ class Engine:
             case "take":
                 yield from self._take(intent.target)
             case "use":
-                yield from self._use(intent.target)
+                yield from self._use(intent.target, intent.raw)
             case "inventory":
                 yield from self._inventory()
             case "attack":
@@ -317,6 +317,15 @@ class Engine:
             return
 
         dest = self.state.room.exits.get(direction)
+        if dest is None and direction is Direction.DOWN:
+            # No floor has a down exit except by its stairs (M11.1). The second
+            # playtest spent twenty turns pressing `d` in rooms without them;
+            # once you have found the stairs, say where they were.
+            stairs = next((r for r in self.state.floor.rooms.values()
+                           if r.kind is RoomKind.DESCENT and r.visited), None)
+            yield Notice("There are no stairs here."
+                         + (f" The way down is in {stairs.name}." if stairs else ""))
+            return
         if dest is None:
             yield Notice("You can't go that way.")
             return
@@ -607,28 +616,38 @@ class Engine:
 
         yield Notice(f"There is no {target} here.")
 
-    def _use(self, target: str) -> Iterator[Event]:
+    def _use(self, target: str, raw: str = "") -> Iterator[Event]:
         player = self.state.player
-        if not target or not target.strip():
-            yield Notice("Use what?")
-            return
+        needle = (target or "").strip().lower()
+        usable = [i for i in player.inventory if i.heal > 0]
+        item = next((i for i in player.inventory
+                     if needle and needle in i.name.lower()), None)
 
-        needle = target.lower()
-        for item in player.inventory:
-            if needle not in item.name.lower():
-                continue
-            if item.heal <= 0:
-                yield Notice(f"You can't think what to do with {item.name}.")
+        if item is None:
+            # One thing you could mean, and you asked to drink or eat, or named
+            # nothing: use it (M11.1). The second playtest carried a canteen and
+            # got "Use what?" for `drink`, then "You aren't carrying water" for
+            # `drink water` -- Hardpan's drinks are not called water.
+            consuming = raw.split()[:1] in (["drink"], ["eat"], ["consume"], ["quaff"])
+            if len(usable) == 1 and (not needle or consuming):
+                item = usable[0]
+            elif not needle:
+                names = ", ".join(i.name for i in usable)
+                yield Notice("Use what?" + (f" You have {names}." if usable else ""))
                 return
-            healed = min(item.heal, player.max_hp - player.hp)
-            player.hp += healed
-            player.inventory.remove(item)
-            self._resolved = True
-            yield Line(f"You use {item.name}. ({healed:+d} hp)", style="good")
-            yield self._status()
-            return
+            else:
+                yield Notice(f"You aren't carrying {target}.")
+                return
 
-        yield Notice(f"You aren't carrying {target}.")
+        if item.heal <= 0:
+            yield Notice(f"You can't think what to do with {item.name}.")
+            return
+        healed = min(item.heal, player.max_hp - player.hp)
+        player.hp += healed
+        player.inventory.remove(item)
+        self._resolved = True
+        yield Line(f"You use {item.name}. ({healed:+d} hp)", style="good")
+        yield self._status()
 
     def _attack(self, target: str) -> Iterator[Event]:
         room = self.state.room
@@ -713,7 +732,11 @@ class Engine:
             surfaced=talk.surfaced if key in talk.asked else None,
         )
         talk.asked.add(key)
-        actor.recollections = [f.text for f in brief.facts]
+        # Only what came from a previous *run*: room entry reads this for the
+        # "(remembers you)" tag. M8 filled it from any route's answer, so the
+        # second playtest's Assayer "remembered" the delver after one question
+        # about a tin of peaches.
+        actor.recollections = [f.text for f in brief.facts if f.key.startswith("memory:")]
 
         # Talking is a resolved action, so anything hostile in the room gets its
         # turn. Conversation in a monster's presence is a choice with a price.

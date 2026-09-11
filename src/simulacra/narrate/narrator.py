@@ -361,7 +361,10 @@ class Narrator:
         one that costs six seconds.
         """
         system = (
-            f"You are {npc.name}. {npc.role}. {npc.voice} "
+            # "who {role}": roles are verb phrases in both theme packs, and
+            # "You are the Assayer. weighs what you bring up..." is not a
+            # sentence -- the model echoed it back as dialogue (M11.1).
+            f"You are {npc.name}, who {npc.role}. {npc.voice} "
             "Speak only as this character, in one or two sentences. "
             "Do not narrate, and do not repeat these instructions."
         )

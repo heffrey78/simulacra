@@ -204,7 +204,9 @@ def test_the_fallback_cannot_invent_a_look_target():
     """"search offcut", the offcut dead, became a look at the room's name."""
     client = FakeClient(structured_result={"verb": "look", "target": "lair of the forgotten"})
     intent = infer("poke at the offcut", "Lair of the Forgotten", client, Settings().intent)
-    assert (intent.verb, intent.target) == ("look", "")
+    # M11.1: not a look with the target dropped -- that sent the request to the
+    # room description. Nobody looked; it is an improvisation.
+    assert intent.verb == "improvise"
 
     client = FakeClient(structured_result={"verb": "look", "target": "offcut"})
     intent = infer("poke at the offcut", "Lair of the Forgotten", client, Settings().intent)
@@ -361,7 +363,7 @@ def test_a_played_run_leaves_a_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(builtins, "input", lambda *_: next(lines))
     assert main(["--offline", "--db", str(tmp_path / "w.db"), "--seed", "3"]) == 0
 
-    files = list((tmp_path / "transcripts").glob("w-run*.txt"))
+    files = list((tmp_path / "transcripts").glob("w-*-run*.txt"))
     assert len(files) == 1
     assert "> look" in files[0].read_text()
 

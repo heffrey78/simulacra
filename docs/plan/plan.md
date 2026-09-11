@@ -547,6 +547,29 @@ data blob is shared by several systems, and two of the four were writers
 replacing it instead of merging.
 
 
+**M11.1 — Second playtest** ✅ *done* · **[task record →](../tasks/M11.1-fixes-tasks.md)** · **[playtest →](../playtests/2026-09-10b.md)**
+The first sessions played outside the `simulacra` theme. The worst thing they
+found: `dodge`, which the parser didn't know, came back from the model fallback
+as a *move* — through an exit the player never named, into the room that killed
+them. `jump`, `slam` and `eat tin of peaches` came back as the room description.
+The fallback's verb list had grown from 10 to 18 across M7–M11, and its guards
+checked that a direction was real rather than that the player typed it. It may
+now only answer `look` or `move` when the player looked or typed the direction;
+anything else is an improvisation, and the judge rules on it.
+
+Live, on a copy of that world: 12 of the 13 fumbled commands landed, and none
+moved the player. The thirteenth, `/exit`, found a hole M11 had opened — `enter`
+falls back to looking at its target, and a target lifted from the room summary
+is the room itself. Also fixed: transcripts named per world (three worlds' runs
+had appended into one file), "(remembers you)" meaning a previous run only, the
+NPC prompt reading as a sentence, `drink`/`eat` using the only thing you carry,
+and `d` saying where the stairs are once you've found them.
+
+The playtest also settled M12's premise: mirrors and altars turned up in a
+silver mine because the engine sends every theme the same room-role words
+(`shrine`, `vault`, `lair`) and stamps every floor motif onto every room.
+
+
 ## 10. State of the repo
 
 Built and verified:

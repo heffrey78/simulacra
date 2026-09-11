@@ -54,8 +54,12 @@ VERB_ALIASES: dict[str, Verb] = {
     "pick up": "take", "take": "take", "get": "take", "grab": "take",
     # Healing items are unusable without these -- a table entry, not a feature.
     "use": "use", "drink": "use", "apply": "use", "quaff": "use",
+    "eat": "use", "consume": "use",
     "inventory": "inventory", "inv": "inventory", "i": "inventory",
     "attack": "attack", "hit": "attack", "kill": "attack", "fight": "attack",
+    # M11.1: from the second playtest, where `smash` reached the model twice and
+    # got a different answer each time -- once an attack, once the room.
+    "smash": "attack", "slam": "attack", "bash": "attack",
     "punch": "attack", "kick": "attack", "chop": "attack", "strike": "attack",
     "stab": "attack", "slash": "attack", "swing": "attack", "smack": "attack",
     "karate chop": "attack", "drop kick": "attack",
@@ -169,12 +173,36 @@ _INTRANSITIVE = frozenset({"inventory", "wait", "quit", "descend", "hide"})
 # not be read as an attempt to examine something named "around".
 _LOOK_FILLERS = frozenset({"around", "here", "about"})
 
+# "search the room" is a plain search, not a search for something named "room".
+# The second playtest's `search room` answered "You don't see room here."
+_SEARCH_FILLERS = frozenset({"room", "here", "around", "area", "about", "place",
+                             "this", "whole", "it", "everything"})
+
+# Physical actions with no verb of their own go straight to the judge (M11.1).
+# Left to the model fallback, `jump` came back as the room description and
+# `dodge` came back as a *move* -- through an exit the player never named, into
+# the room that killed them.
+_IMPROVISE = frozenset({"jump", "dodge", "climb", "leap", "duck", "sneak",
+                        "crawl", "vault", "roll", "tumble"})
+
+# What a player types when they mean to look or search. The fallback may only
+# answer `look` or `search` when one of these was typed, or when the player
+# named the thing -- otherwise the request lands on the room description.
+_LOOK_WORDS = frozenset({"look", "see", "view", "glance", "peer", "peek", "gaze",
+                         "stare", "watch", "observe", "study", "check", "scan",
+                         "survey", "regard", "read", "inspect", "examine"})
+_SEARCH_WORDS = frozenset({"search", "rummage", "loot", "hunt", "forage", "scour",
+                           "dig", "comb", "ransack"})
+_ENTER_WORDS = frozenset({"enter", "into", "inside", "through", "in"})
+
 # "follow me" addresses whoever is standing there, not someone named "me".
 _SELF_WORDS = frozenset({"me", "us", "along"})
 
 
 def _normalise(text: str) -> str:
-    return " ".join(text.lower().split())
+    # A leading slash is a chat-client reflex, not part of the command (M11.1):
+    # `/exit` reached the model fallback and came back as the room description.
+    return " ".join(text.lower().strip().lstrip("/!").split())
 
 
 def _strip_articles(text: str) -> str:
@@ -196,6 +224,9 @@ def parse(text: str) -> Intent | None:
     # game; requiring "go north" would be a usability failure.
     if (direction := Direction.parse(raw)) is not None:
         return Intent(verb="move", target=direction.value, raw=raw)
+
+    if raw.split()[0] in _IMPROVISE:
+        return Intent(verb="improvise", target=raw, raw=raw)
 
     for alias, verb in _ALIASES_BY_LENGTH:
         if raw == alias:
@@ -222,6 +253,8 @@ def parse(text: str) -> Intent | None:
             return Intent(verb="move", target=direction.value, raw=raw)
 
         if verb == "look" and target in _LOOK_FILLERS:
+            target = ""
+        if verb == "search" and target and set(target.split()) <= _SEARCH_FILLERS:
             target = ""
 
         # `ask archivist for the blade` and `ask archivist about the blade`
@@ -269,9 +302,15 @@ def infer(text: str, room_summary: str, client, policy) -> Intent:
     if verb not in (*Verb.__args__, "improvise"):
         verb = "improvise"
 
-    # A direction the model named as a target still has to be a real direction.
-    if verb == "move" and Direction.parse(target) is None:
-        verb, target = "improvise", ""
+    typed = set(_normalise(text).split())
+
+    # A move has to be to a direction the player *typed*, not merely a real one
+    # (M11.1). `dodge` came back as move-north in the second playtest and walked
+    # the player into the room that killed them.
+    if verb == "move":
+        typed_dirs = {d for w in typed if (d := Direction.parse(w)) is not None}
+        if Direction.parse(target) not in typed_dirs:
+            verb, target = "improvise", ""
 
     # take/use act on the target unconditionally (first substring match in the
     # room/inventory) -- a target the model invented from room context rather
@@ -281,13 +320,26 @@ def infer(text: str, room_summary: str, client, policy) -> Intent:
     if verb in ("take", "use") and target and target not in _normalise(text):
         verb = "improvise"
 
-    # The same lifting drove the playtest's search bug through `look`: "search
-    # offcut", with the offcut already dead, became a look at "lair of the
-    # forgotten" -- the room's name, taken from the summary. A look target that
-    # shares no word with what the player typed is dropped, not trusted.
-    if verb in ("look", "search") and target:
-        if not set(target.split()) & set(_normalise(text).split()):
+    # `look` and `search` only when the player looked or searched, or named the
+    # thing. M11 dropped an invented look target but *kept the verb*, which sent
+    # `jump`, `slam`, `eat tin of peaches` to the room description in the second
+    # playtest. They are improvisations; the judge rules on them, the same way
+    # take/use have always degraded above.
+    if verb in ("look", "search"):
+        named = bool(target) and bool(set(target.split()) & typed)
+        if target and not named:
             target = ""
+        looking = _LOOK_WORDS if verb == "look" else _SEARCH_WORDS
+        if not named and not typed & looking:
+            verb = "improvise"
+
+    # The same hole through a door M11 opened: `enter` falls back to looking at
+    # its target, and a target lifted from the summary is the room's own name,
+    # which is the room description. `/exit` took exactly that path live.
+    if verb == "enter":
+        named = bool(target) and bool(set(target.split()) & typed)
+        if not named and not typed & _ENTER_WORDS:
+            verb = "improvise"
 
     target = target if verb != "improvise" else _normalise(text)
     if verb == "give":
