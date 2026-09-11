@@ -79,7 +79,9 @@ def test_descent_directs_the_new_floor(wired):
     events = collect(engine.turn("descend"))
     assert any(isinstance(e, Thinking) for e in events)
     assert state.depth == 2
-    assert state.floor.theme_name == "The Reprinted Ward"
+    # The fake director answers every floor identically, and M12 refuses a
+    # floor name the world already uses -- floor 2 takes the theme's title.
+    assert state.floor.theme_name == engine.theme.floor_title(2)
 
 
 def test_offline_engine_still_emits_flat_lines(tmp_path, theme):

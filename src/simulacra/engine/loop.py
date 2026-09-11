@@ -614,6 +614,14 @@ class Engine:
                 yield ItemTaken(item=item.name)
                 return
 
+        # Something the room's own text describes, but not something to carry
+        # (M12). "A rusted iron key lies in the wall" followed by "There is no
+        # key here" was the engine contradicting its own prose, three times in
+        # the second playtest.
+        if discovery.grade(target, room, self.theme,
+                           world_seed=self.state.world_seed) == "mentioned":
+            yield Notice(f"The {target} is part of the room, not something you can carry.")
+            return
         yield Notice(f"There is no {target} here.")
 
     def _use(self, target: str, raw: str = "") -> Iterator[Event]:
@@ -1105,12 +1113,17 @@ class Engine:
         if self.client is None:
             return
         yield Thinking("The floor takes shape")
+        others = self.store.floor_identities(except_depth=floor.depth)
         ok = direct_floor(
             floor, self.theme, self.client, self.settings.director,
             # From the world, not from this run's traversal: run 2's first
             # descent has walked nothing, and would otherwise tell the director
             # to avoid nothing while the world already uses those names.
             previously=self.store.floor_names(below_depth=floor.depth),
+            # M12: every other floor's moods and names, which code enforces --
+            # the model was told the names before and repeated them anyway.
+            avoid_motifs=[m for d in others for m in (d.get("motifs") or [])],
+            used_names=[d["theme_name"] for d in others if d.get("theme_name")],
         )
         if ok and floor.theme_name:
             self.state.floor_history.append(floor.theme_name)

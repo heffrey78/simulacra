@@ -46,6 +46,26 @@ class Npc:
     canon: tuple[str, ...] = ()
 
 
+# What the model is told a room *is*, when the theme pack doesn't say (M12).
+#
+# `RoomKind` is structure and stays the engine's. Its *values* -- "shrine",
+# "vault", "lair" -- were going to the director and the narrator verbatim, and
+# they are fantasy-dungeon words: told "shrine", a small model wrote altars and
+# statues of gods into a silver mine. These describe the role without a setting.
+ROLE_DEFAULTS: dict[RoomKind, str] = {
+    RoomKind.ENTRANCE: "where this floor begins",
+    RoomKind.CORRIDOR: "a way between rooms",
+    RoomKind.CHAMBER: "a large working space",
+    RoomKind.VAULT: "where something worth having is kept",
+    RoomKind.LAIR: "where something dangerous has settled",
+    RoomKind.SHRINE: "the floor's most remarkable place",
+    RoomKind.DESCENT: "where the way down is",
+}
+
+_ORDINALS = ("First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh",
+             "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth")
+
+
 @dataclass
 class Theme:
     name: str
@@ -68,6 +88,19 @@ class Theme:
     # theme's -- the same rule as `rooms` and `monsters`.
     fixtures: dict[str, list[str]] = field(default_factory=dict)
     npcs: list[Npc] = field(default_factory=list)
+    # The theme's own words for each room role (M12). Optional: ROLE_DEFAULTS
+    # already keep engine vocabulary out of the prompts; this is voice.
+    roles: dict[str, str] = field(default_factory=dict)
+    # What a floor is called when the director's name is refused -- repeated,
+    # or a stock phrase. `{n}` is the depth, `{nth}` its ordinal word.
+    floor_name: str = ""
+
+    def role(self, kind: RoomKind) -> str:
+        return (self.roles.get(kind.value) or "").strip() or ROLE_DEFAULTS[kind]
+
+    def floor_title(self, depth: int) -> str:
+        nth = _ORDINALS[depth - 1] if 0 < depth <= len(_ORDINALS) else f"{depth}th"
+        return (self.floor_name or "Floor {n}").format(n=depth, nth=nth)
 
     def room_names(self, kind: RoomKind) -> list[str]:
         return self.rooms.get(kind.value) or [kind.value]
@@ -111,6 +144,8 @@ class Theme:
             monsters=d.get("monsters", {}),
             items=d.get("items", {}),
             fixtures=d.get("fixtures", {}),
+            roles=d.get("roles", {}),
+            floor_name=d.get("director", {}).get("floor_name", ""),
             npcs=[
                 Npc(
                     anchor=n["anchor"], name=n["name"], role=n["role"], voice=n["voice"],

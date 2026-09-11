@@ -485,6 +485,21 @@ class Store:
         self.upsert_node(node_id, node["kind"], node["name"], data)
         self.commit()
 
+    def floor_identities(self, *, except_depth: int) -> list[dict]:
+        """Every other floor's stored identity -- for the director's avoid-lists
+        and for refusing a repeated floor name or mood (M12)."""
+        with self._lock:
+            rows = self.db.execute("SELECT data FROM nodes WHERE kind = 'floor'").fetchall()
+        out = []
+        for r in rows:
+            try:
+                d = json.loads(r["data"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if d.get("depth") != except_depth:
+                out.append(d)
+        return out
+
     def floor_names(self, *, below_depth: int, limit: int = 3) -> list[str]:
         """Names of the world's already-identified floors, nearest first.
 

@@ -41,12 +41,13 @@ GUARD_PREFIX_CHARS = 48
 
 # Bumped when the room prompt changes shape, so cached prose from the old shape
 # is regenerated rather than replayed. 2 = M11, items and actors removed.
-PROSE_VERSION = 2
+# 3 = M12, the theme's role words and one mood per room.
+PROSE_VERSION = 3
 
 # Labels that only ever appear in the prompt. Any of them in the output means
 # the model is transcribing rather than writing.
 _CENSUS_LABELS = (
-    "room:", "role:", "exits:", "contains:", "present:", "concept:",
+    "room:", "role:", "exits:", "contains:", "present:", "concept:", "mood:",
     # Dialogue's own labels. These only ever appear in the prompt, so seeing one
     # in the output means the model is transcribing rather than speaking.
     # Measured live: an NPC replied "The delver said: archivist vault on floor
@@ -123,16 +124,26 @@ class Narrator:
 
     def _system(self) -> str:
         parts = [self._theme.narrator_system]
-        if note := self._theme.style_note():
+        # No motif list (M12). The whole list went into every description's
+        # system prompt, and a small model treats a list as a checklist: the
+        # second playtest's transcript had `tallow` 24 times. The theme's motifs
+        # still reach rooms, one at a time, as the MOOD fallback in `_census`.
+        if note := self._theme.style_note(motifs=False):
             parts.append(note)
         return " ".join(p for p in parts if p)
 
     def _census(self, floor: Floor, room: Room) -> str:
-        lines = [f"ROOM: {room.name}", f"ROLE: {room.kind.value}"]
+        # The theme's description of the role, never the engine's role word
+        # (M12): told "shrine", the model wrote altars into a silver mine.
+        lines = [f"ROOM: {room.name}", f"ROLE: {self._theme.role(room.kind)}"]
         if room.concept:
             lines.append(f"CONCEPT: {room.concept}")
-        if floor.motifs:
-            lines.append(f"MOTIFS: {', '.join(floor.motifs)}")
+        # One mood, rotated -- never the whole list (M12). Every floor motif on
+        # every room made each floor's rooms the same room: run 2 of the second
+        # playtest put the torch, the crumbling wall and the hollow altar in
+        # every room of its first floor.
+        if mood := self._mood(floor, room):
+            lines.append(f"MOOD: {mood}")
         # No items, no actors (M11). Prose is cached, and since M6 the cache
         # outlives the run -- so anything the narrator is shown here is in the
         # description forever. The playtest took a jar of water and the room
@@ -157,6 +168,15 @@ class Narrator:
             {"role": "system", "content": self._system()},
             {"role": "user", "content": f"{census}\n\n{instruction}"},
         ]
+
+    def _mood(self, floor: Floor, room: Room) -> str:
+        """This room's one mood: the floor's, rotated by room, else the theme's."""
+        pool = list(floor.motifs) or list(self._theme.motifs)
+        if not pool:
+            return ""
+        order = sorted(floor.rooms)
+        i = order.index(room.id) if room.id in order else 0
+        return pool[i % len(pool)]
 
     def _key(self, floor: Floor, room: Room) -> str:
         # Concept is part of the key: if the director renames a floor, stale

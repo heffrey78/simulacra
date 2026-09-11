@@ -57,11 +57,13 @@ def test_invented_room_ids_are_dropped(floor, theme):
     assert not any(r.concept == "invented" for r in floor.rooms.values())
 
 
-def test_corridors_are_excluded_from_the_census(floor):
+def test_corridors_are_excluded_from_the_census(floor, theme):
     """Corridors are over half a deep floor and need no identity. Including them
     would multiply the most expensive call in the game for nothing."""
     from simulacra.world.director import _census
-    census, ids = _census(floor)
+    # The census takes the theme since M12: it describes each room in the
+    # theme's words rather than the engine's role names.
+    census, ids = _census(floor, theme)
     corridors = [r.id for r in floor.rooms.values() if r.kind is RoomKind.CORRIDOR]
     assert corridors
     for rid in corridors:

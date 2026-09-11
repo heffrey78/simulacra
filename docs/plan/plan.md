@@ -570,6 +570,33 @@ silver mine because the engine sends every theme the same room-role words
 (`shrine`, `vault`, `lair`) and stamps every floor motif onto every room.
 
 
+**M12 — Variety** ✅ *done* · **[task record →](../tasks/M12-variety-tasks.md)**
+Both 2026-09-10 playtests saw the same image everywhere — mirrors on every floor
+of a copy-of-a-vanished-place, and mirrors, altars and keys in a silver mine.
+The second theme settled the cause: it was the engine. Every theme got the same
+room-role words (`shrine` reads as altars; `vault` as keys), every room's prompt
+carried every floor motif and the theme's whole motif list, and the director's
+stock names ("Chamber of Shadows", "Lair of the Forgotten") overwrote both
+themes' own.
+
+The model is now told what a room *does* in the theme's words or a neutral
+default, never the engine's role name; each room gets one mood, rotated; motifs
+must be moods rather than objects; stock names, repeated floor names and
+repeated moods are refused in code; and room ids are stripped from anything the
+director writes. Measured on fresh worlds with fixed seeds, the real model,
+before and after — Hardpan on the engine's neutral defaults alone:
+
+| | Hardpan before | after | simulacra before | after |
+|---|---|---|---|---|
+| words in half a floor's rooms | 64 | **21** | 31 | **8** |
+| `mirror` per 1k words | 9.1 | **1.1** | 10.4 | 5.6 |
+| `altar`/`glass`/`shattered` | present | **0** | present | glass only |
+| stock director room names | 4 of 5 | **0 of 14** | 8 of 8 | **0 of 10** |
+
+The baseline also showed the director dodging its own avoid-list by numbering —
+*"Erebus's Veil"*, *"…II"*, *"…III"* — so floor names are now compared by stem.
+
+
 ## 10. State of the repo
 
 Built and verified:

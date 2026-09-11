@@ -29,6 +29,23 @@ banned = ["ancient", "eerie", "mysterious", "eldritch", "you feel a sense of", "
 system = """You design one floor of a dungeon that imperfectly copies a vanished place. \
 Give it a specific identity, not a generic one. Be terse."""
 
+# When a floor's name is refused -- repeated in this world, or a stock phrase
+# like "Echoes of the Forgotten" -- it takes this instead. {nth} is First,
+# Second...; {n} is the depth.
+floor_name = "The {nth} Impression"
+
+# What the model is told each structural room *is*, in this theme's words (M12).
+# Without these the engine's neutral descriptions are used; either way the
+# model never sees "shrine" or "vault", which it reads as altars and keys.
+[roles]
+entrance = "where the copy begins"
+corridor = "a stretch the copy repeats"
+chamber  = "a workroom where copies were made"
+vault    = "where the best impression is kept"
+lair     = "where something has settled into the copy"
+shrine   = "the part the copy got most nearly right"
+descent  = "the way down to the next impression"
+
 [judge]
 # Tier-1 call. Rules on improvised actions.
 system = """You are a strict, fair referee. Decide if the action is physically \
