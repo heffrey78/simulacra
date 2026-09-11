@@ -11,10 +11,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3", "pytest-cov>=6.0"]
-# Optional on purpose: notes.md's first line is "must use minimal resources",
-# and the headless/offline path must not grow a UI framework it never imports.
+# Optional on purpose: the founding brief's first line was "must use minimal
+# resources", and the headless/offline path must not grow a UI framework it
+# never imports. For installs: `pip install simulacra[tui]`.
 tui = ["textual>=8.2"]
+
+[dependency-groups]
+# A checkout's environment. A group rather than an extra because `uv run` syncs
+# to the dependencies plus the default groups: as extras, every plain
+# `uv run simulacra` uninstalled pytest and Textual (M11.1).
+dev = ["pytest>=8.3", "pytest-cov>=6.0", "textual>=8.2"]
 
 [project.scripts]
 simulacra = "simulacra.__main__:main"

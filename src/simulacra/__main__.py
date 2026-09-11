@@ -246,7 +246,8 @@ def main(argv: list[str] | None = None) -> int:
             from .ui.tui import play_tui
         except ImportError as e:  # pragma: no cover - depends on install shape
             print(f"[the tui frontend needs Textual: {e}]\n"
-                  "[install with: pip install -e '.[tui]']", file=sys.stderr)
+                  "[in a checkout: uv sync; otherwise: pip install 'simulacra[tui]']",
+                  file=sys.stderr)
             return 1
     else:
         play_tui = None

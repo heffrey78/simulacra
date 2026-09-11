@@ -113,7 +113,8 @@ over the whole floor, while every individual room stays cheap.
 
 ## 5. Memory: one file, no daemons
 
-notes.md called for ChromaDB + Neo4j in Docker. **Recommended against, and this
+notes.md — the founding brief, since removed from the tree and kept in git
+history — called for ChromaDB + Neo4j in Docker. **Recommended against, and this
 is the one place the plan departs from the notes.** A JVM with a 1–2 GB heap plus
 a Chroma server would be competing for the same 10 GB and the same 8 cores as
 CPU inference — the thing the whole design is organised around protecting.
@@ -620,15 +621,20 @@ Built and verified:
 - [memory/writer.py](../../src/simulacra/memory/writer.py) — the write path, an observer
 - [__main__.py](../../src/simulacra/__main__.py) — playable: `simulacra --seed 42` (`--offline` for no model, `--ui tui` for panels)
 
-Nothing is stubbed. Every milestone through M5 is implemented and tested.
+Nothing is stubbed. Every milestone in §9 is implemented and tested.
 
 ```
-uv venv && uv pip install -e ".[dev,tui]"
-pytest                 # 434 tests, no model needed (30 skip without the tui extra)
-simulacra --seed 42    # the REPL: scriptable, pipeable, CI-friendly
-simulacra --ui tui     # the panelled frontend
-pytest -m llm          # opt-in, needs the daemon
+uv sync                       # the project plus the dev group: pytest and Textual
+uv run pytest                 # no model needed
+uv run simulacra --seed 42    # the REPL: scriptable, pipeable, CI-friendly
+uv run simulacra --ui tui     # the panelled frontend
+uv run pytest -m llm          # opt-in, needs the daemon
 ```
+
+The test tools and Textual are a uv *dependency group*, not extras: `uv run`
+keeps default groups and strips extras, so as extras every plain `uv run` quietly
+uninstalled them (M11.1). An install outside a checkout gets the TUI with
+`pip install simulacra[tui]`.
 
 ---
 
