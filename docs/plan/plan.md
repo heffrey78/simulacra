@@ -683,6 +683,37 @@ re-tuned against the armed game, and only the boss's drop rate moved, from 50%
 to 35%. M3's curve tests all still pass. Whether a two-floor-longer game is the
 right length is a design question, and the knobs are M3's.
 
+
+**M15 — Search, and the third playtest's fixes** ✅ *done* · **[task record →](../tasks/M15-search-and-fixes-tasks.md)** · **[playtest →](../playtests/2026-09-11b.md)**
+The first milestone picked from the [roadmap](../roadmap.md): R1 and R2. Run
+3's one complaint was that `search` re-described the room. The search prompt
+was never shown the room's description and borrowed the room narrator's
+instructions. Nothing held it to the thing it was asked about: 10 of the run's
+29 finds used the fixture's word.
+
+A search now sees the description and must open by naming its fixture. When it
+doesn't, it's refused and retried once. `look` lists what a room has turned
+up, so a find joins the room. Measured on the run's own rooms, 58 searches
+each:
+
+| | committed | M15 |
+|---|---|---|
+| finds shown that name their fixture | 18 of 58 | **49 of 49** |
+| open with "You" | 30 | **0** |
+| refused | 0 | 9 |
+
+The refusals are the cost. A diagnostic of them found mostly bad luck twice:
+the same pairs pass 24 times in 42, and searching again asks for the same
+fixture.
+
+The small fixes:
+- exits say which are unexplored;
+- `greet` is a verb;
+- a two-word NPC name no longer splits into a name and a topic;
+- `inventory` groups;
+- the epitaph no longer counts or stops mid-sentence. It still calls the
+  delver "he", which is now part of R3.
+
 ---
 
 **What's next lives in the [roadmap](../roadmap.md).** Every open item from the

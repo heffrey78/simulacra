@@ -144,9 +144,20 @@ def test_search_never_asks_the_parser_model(game, monkeypatch):
     assert "tier1" not in client.calls
 
 
+def names_what_it_is_asked(client):
+    """A stand-in model whose find names its fixture, as M15 requires of one."""
+    def stream(messages, policy, *, kind="stream"):
+        client.prompts.append(list(messages))
+        client.stream_calls += 1
+        target = messages[-1]["content"].split("LOOKING AT: ", 1)[1].split("\n", 1)[0]
+        yield f"{target[:1].upper()}{target[1:]}, its edge worn smooth by hands that are gone."
+    client.stream = stream
+
+
 def test_bare_search_finds_what_the_room_has_not_said(game, monkeypatch):
     engine, state, store, client = game
     monkeypatch.setattr(discovery, "is_fertile", lambda *a: True)
+    names_what_it_is_asked(client)
     room = state.room
 
     list(engine.turn("search"))
@@ -172,6 +183,7 @@ def test_bare_search_in_a_barren_room_costs_nothing(game, monkeypatch):
 def test_the_same_room_gives_up_the_same_things(game, monkeypatch):
     engine, state, store, client = game
     monkeypatch.setattr(discovery, "is_fertile", lambda *a: True)
+    names_what_it_is_asked(client)
     list(engine.turn("search"))
     first = set(store.node_data(f"room:{state.room.id}")["found"])
 

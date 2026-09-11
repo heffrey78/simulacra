@@ -48,6 +48,8 @@ PROSE_VERSION = 3
 # the model is transcribing rather than writing.
 _CENSUS_LABELS = (
     "room:", "role:", "exits:", "contains:", "present:", "concept:", "mood:",
+    # A search's census carries the room's description (M15).
+    "description:",
     # Dialogue's own labels. These only ever appear in the prompt, so seeing one
     # in the output means the model is transcribing rather than speaking.
     # Measured live: an NPC replied "The delver said: archivist vault on floor
@@ -86,6 +88,55 @@ def looks_like_echo(text: str, census: str, *, verbatim: bool = True) -> bool:
         return False
     # A prefix that appears verbatim in the census is a copy, not a description.
     return len(t) >= 12 and t in _norm(census)
+
+
+_COUNTS = re.compile(
+    r"\d|\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+    r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|"
+    r"fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b"
+)
+
+
+def one_sentence(text: str) -> str:
+    """The epitaph's first sentence, or nothing (M15).
+
+    Nothing when it was cut off before a sentence ended -- the third playtest's
+    stopped at "…from his bench as" -- or when it counts anything: the engine
+    states the floor and the turns, and a model's count only contradicts it.
+    "One" is allowed; "no one" is not a number.
+    """
+    text = " ".join(text.replace('"', "").split())
+    end = re.search(r"[.!?](?=\s|$)", text)
+    if end is None:
+        return ""
+    sentence = text[: end.end()]
+    return "" if _COUNTS.search(sentence.lower()) else sentence
+
+
+def names_its_find(text: str, target: str) -> bool:
+    """Does a search's find say what was found? (M15)
+
+    The third playtest's 29 finds used the word for their fixture 10 times.
+    Asked for the harness, the model described the room's own lever; asked for
+    the tag board, the Threshold's door. A find that never names its fixture is
+    re-description, whatever the prompt asked, and the player can't follow it
+    up: `look at ribcage` after a find about bones had nothing to reach.
+    """
+    said = set(re.findall(r"[a-z]+", text.lower()))
+    wanted = [w for w in re.findall(r"[a-z]+", target.lower())
+              if len(w) >= 3 and w not in ("the", "and")]
+    if not wanted:
+        return True
+    # "the tagboard" names the tag board: measured, in the baseline probe.
+    if len(wanted) > 1 and "".join(wanted) in re.sub(r"[^a-z]", "", text.lower()):
+        return True
+    # "the timbers" names timbering, "the straps" a strapped chest: the same
+    # word in another form, measured among the refusals. Five letters, so a
+    # stem is a word and not a syllable.
+    stems = {w[:5] for w in wanted if len(w) >= 5}
+    if any(s[:5] in stems for s in said if len(s) >= 5):
+        return True
+    return any(w in said or w.rstrip("s") in said or f"{w}s" in said for w in wanted)
 
 
 def looks_degenerate(text: str) -> bool:
@@ -489,41 +540,59 @@ class Narrator:
         caller must then write nothing down -- a rejected generation becoming
         permanent canon is M7's expensive lesson.
         """
-        census = f"ROOM: {room.name}\nCONCEPT: {room.concept}\nLOOKING AT: {target}"
-        messages = [
-            {"role": "system", "content": self._system()},
-            {"role": "user", "content":
-                f"{census}\n\nThe player looks closely at the {target}. Write "
-                f"one or two sentences about the {target} itself -- not about "
-                f"the room, and not about anything else in it. It is scenery, "
-                f"not treasure: do not offer it to be taken. Do not repeat the "
-                f"labels."},
-        ]
+        # The description the player just read goes in (M15). Without it the
+        # model could not add to the room, only describe it again: it was given
+        # the room's name and concept, and wrote a room.
+        census = (f"ROOM: {room.name}\nCONCEPT: {room.concept}\n"
+                  f"DESCRIPTION: {room.prose}\nLOOKING AT: {target}")
+        opening = target[:1].upper() + target[1:]
+        asks = (
+            f"The player has read the description above and looks closer at "
+            f"{target}. Write one or two sentences about {target} itself: "
+            f"something the description does not already say. Begin with "
+            f"\"{opening}\". Describe the thing, not the room and not the "
+            f"player. It is scenery, not treasure: do not offer it to be taken. "
+            f"Do not repeat the labels.",
+            f"Write one or two original sentences about {target}. Begin with "
+            f"\"{opening}\". Do NOT copy the description.",
+        )
 
-        buffer: list[str] = []
-        released = False
-        gen = self._client.stream(messages, self._policy, kind="tier2")
-        try:
-            for piece in gen:
-                buffer.append(piece)
-                if released:
-                    yield piece
-                    continue
-                head = "".join(buffer)
-                if len(head) >= GUARD_PREFIX_CHARS:
-                    if looks_like_echo(head, census) or looks_degenerate(head):
-                        gen.close()
-                        buffer.clear()
-                        break
-                    released = True
-                    yield head
-        finally:
-            gen.close()
+        def bad(text: str) -> bool:
+            return (not text or looks_like_echo(text, census) or looks_degenerate(text)
+                    or not names_its_find(text, target))
 
-        if not released:
+        # One strict retry, as room prose has: a rejected head costs a second
+        # call rather than the find. Nothing is shown until a head passes.
+        for ask in asks:
+            messages = [
+                {"role": "system", "content": self._system()},
+                {"role": "user", "content": f"{census}\n\n{ask}"},
+            ]
+            buffer: list[str] = []
+            released = False
+            gen = self._client.stream(messages, self._policy, kind="tier2")
+            try:
+                for piece in gen:
+                    buffer.append(piece)
+                    if released:
+                        yield piece
+                        continue
+                    head = "".join(buffer)
+                    if len(head) >= GUARD_PREFIX_CHARS:
+                        if bad(head):
+                            break
+                        released = True
+                        yield head
+            finally:
+                gen.close()
+
+            if released:
+                return
             text = "".join(buffer).strip()
-            bad = not text or looks_like_echo(text, census) or looks_degenerate(text)
-            yield self.NOTHING_FOUND if bad else text
+            if len(text) < GUARD_PREFIX_CHARS and not bad(text):
+                yield text
+                return
+        yield self.NOTHING_FOUND
 
     def epitaph(self, cause: str, depth: int, turns: int) -> str:
         """One blocking line on death. The player has stopped playing; a 3s wait
@@ -532,17 +601,20 @@ class Narrator:
         Non-fatal: a run ends without an epitaph rather than crashing on the way
         out.
         """
+        # No numbers in the prompt (M15). The engine's own line already says the
+        # floor and the turns; handed them, the 2b wrote "thirty-eight turns"
+        # for 308. `depth` and `turns` stay in the signature for the caller.
         messages = [
             {"role": "system", "content": self._system()},
             {"role": "user", "content":
-                f"A delver died on floor {depth} after {turns} turns. "
-                f"Cause: {cause}. Write ONE sentence marking the death. "
-                "No preamble, no quotation marks."},
+                f"A delver was killed by {cause}. Write ONE short, complete "
+                "sentence marking the death. Call the delver \"the delver\" or "
+                "\"they\". No numbers, no preamble, no quotation marks."},
         ]
         try:
             text = self._client.complete(
-                messages, self._policy.with_(num_predict=60), kind="epitaph"
+                messages, self._policy.with_(num_predict=80), kind="epitaph"
             )
         except Exception:
             return ""
-        return " ".join(text.split()).strip('"')
+        return one_sentence(text)

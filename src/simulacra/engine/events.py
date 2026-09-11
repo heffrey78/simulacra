@@ -63,6 +63,11 @@ class RoomEntered(Event):
     # knows it -- it was simply being thrown away. Defaulted so every existing
     # construction site and test keeps working.
     via: str | None = None
+    # M15. The exits that lead to a room not yet visited this run. The third
+    # playtest spent 18 of floor 6's 73 commands on "There are no stairs here."
+    # while looping five rooms: the way down was behind the one exit never
+    # taken, and the exits line couldn't say which one that was.
+    unexplored: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

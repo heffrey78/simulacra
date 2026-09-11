@@ -481,6 +481,8 @@ class SimulacraApp(App[None]):
                         key=lambda e: _EXIT_ORDER.index(e) if e in _EXIT_ORDER else 99,
                     )
                     shown = " ".join(_EXIT_SHORT.get(e, e) for e in ordered)
+                    if new := [_EXIT_SHORT.get(e, e) for e in ordered if e in event.unexplored]:
+                        shown += f"  (unexplored: {' '.join(new)})"
                     log.write(Text(f"exits: {shown}", style="dim"))
                 self.query_one("#status", StatusPanel).entered(event)
                 self.query_one("#map", MapPanel).entered(event)

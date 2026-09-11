@@ -64,6 +64,10 @@ VERB_ALIASES: dict[str, Verb] = {
     "stab": "attack", "slash": "attack", "swing": "attack", "smack": "attack",
     "karate chop": "attack", "drop kick": "attack",
     "talk to": "talk", "talk": "talk", "speak": "talk", "ask": "talk",
+    # M15: greetings. Unknown to stage 1, `greet` reached the model fallback,
+    # which answered "greet Powder Monkey" with a give: "You are not carrying
+    # that." "greet widow" had landed, by luck, one floor earlier.
+    "greet": "talk", "hail": "talk", "hello": "talk", "hi": "talk",
     # `tell` is an assertion, not a question -- the one place the player puts a
     # claim *into* the world. Kept a deterministic verb rather than a tier-1
     # "was that a statement?" classifier, which is M8's route work.

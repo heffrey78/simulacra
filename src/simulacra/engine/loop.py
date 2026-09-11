@@ -118,6 +118,21 @@ def _addressed(target: str, npcs: list):
     return None
 
 
+def _past_the_name(rest: str, actor) -> str:
+    """What is left once the rest of the NPC's name is taken off the front (M15).
+
+    With no connective the parser takes one word as the addressee, so `talk to
+    Powder Monkey` arrived as addressee "powder" and topic "monkey". Only the
+    engine knows who is in the room, so only the engine can tell a second word
+    of a name from the start of a question.
+    """
+    words = rest.split()
+    name = _name_words(actor.name)
+    while words and words[0] in name:
+        words.pop(0)
+    return " ".join(words)
+
+
 @dataclass
 class Conversation:
     """What has already been said to this NPC, this run.
@@ -355,6 +370,7 @@ class Engine:
         yield RoomEntered(
             room_id=room.id, name=room.name,
             exits=self._exits(room), first_visit=False,
+            unexplored=self._unexplored(room),
         )
         yield from self._describe(room)
         yield from self._contents(room)
@@ -465,6 +481,10 @@ class Engine:
             data = self.store.node_data(node)
             data["found"] = {**(data.get("found") or {}),
                              **{w: canon_id for w in wanted}}
+            # And by name (M15), which the index above can't give back: `look`
+            # lists what a room has turned up, so a find joins the room.
+            data["found_names"] = list(dict.fromkeys(
+                [*(data.get("found_names") or []), target]))
             self.store.set_node_data(node, data)
         except Exception:
             pass
@@ -648,7 +668,11 @@ class Engine:
         # birdcage traps" followed by "take scales" -> "There is no scales here"
         # was the engine contradicting itself one command after it spoke.
         found = self.store.node_data(f"room:{room.id}").get("found") or {}
-        if (discovery.words(target) & set(found)
+        # And anything a find's own text described (M15): "take paper" after a
+        # find about the notice. Only a refusal -- `look` still keeps M10's rule
+        # that a find answers to what was searched for, not to every word in it.
+        described = set().union(*(discovery.words(r["text"]) for r in self._room_canon()))
+        if (discovery.words(target) & (set(found) | described)
                 or discovery.grade(target, room, self.theme,
                                    world_seed=self.state.world_seed) == "mentioned"):
             # No noun agreement to get wrong: "The scales is" was next.
@@ -796,6 +820,8 @@ class Engine:
         if actor is None:
             yield Notice("Which of them? " + ", ".join(a.name for a in npcs) + ".")
             return
+        if addressee:
+            topic = _past_the_name(topic, actor)
 
         persona = self._personas().get(actor.id)
         if persona is None:
@@ -905,6 +931,8 @@ class Engine:
         if actor is None:
             yield Notice("Tell which of them? " + ", ".join(a.name for a in npcs) + ".")
             return
+        if addressee:
+            claim = _past_the_name(claim, actor)
 
         claim = claim.strip()
         if not claim:
@@ -1205,8 +1233,11 @@ class Engine:
             yield Line("You carry nothing.", style="dim")
             return
         yield Line("You carry:", style="dim")
-        for item in inv:
-            yield Line(f"  {item.name}{loot.describe(item)}")
+        # Grouped (M15), as `use` has been since M14.1: the third playtest's
+        # pack was eleven lines, four of them the same tin of peaches. Grouped by
+        # value too, since a deeper tin heals more than a shallow one.
+        for (name, value), n in Counter((i.name, loot.describe(i)) for i in inv).items():
+            yield Line(f"  {name}{f' ×{n}' if n > 1 else ''}{value}")
 
     # -- shared ------------------------------------------------------------
 
@@ -1260,6 +1291,7 @@ class Engine:
         yield RoomEntered(
             room_id=room.id, name=room.name,
             exits=self._exits(room), first_visit=first_visit, via=via,
+            unexplored=self._unexplored(room),
         )
         yield self._status()
 
@@ -1316,6 +1348,29 @@ class Engine:
             yield Line("A delver's pack lies here, where they fell.", style="alert")
         for item in room.items:
             yield Line(f"You see {item.name}.", style="good")
+        if names := self._noticed(room):
+            yield Line("Noticed here: " + "; ".join(names) + ".", style="dim")
+
+    def _noticed(self, room: Room) -> list[str]:
+        """What searching has turned up in this room, by name (M15).
+
+        The room's prose is cached for the life of the world and never grows, so
+        before this a find was on screen once and then gone: the playtest's
+        `look` after a search showed the room exactly as before.
+        """
+        data = self.store.node_data(f"room:{room.id}")
+        names = list(data.get("found_names") or [])
+        # Finds from before M15 kept only their words. A bare search's target
+        # is one of the theme's fixtures, so the pool can name it again.
+        finds: dict = {}
+        for word, canon_id in (data.get("found") or {}).items():
+            finds.setdefault(canon_id, set()).add(word)
+        for words in finds.values():
+            name = next((f for f in self.theme.fixture_names(room.kind)
+                         if discovery.words(f) == words), None)
+            if name and name not in names:
+                names.append(name)
+        return names
 
     def _status(self) -> StatusChanged:
         p = self.state.player
@@ -1327,3 +1382,8 @@ class Engine:
     @staticmethod
     def _exits(room: Room) -> tuple[str, ...]:
         return tuple(d.value for d in room.exits)
+
+    def _unexplored(self, room: Room) -> tuple[str, ...]:
+        rooms = self.state.floor.rooms
+        return tuple(d.value for d, dest in room.exits.items()
+                     if dest in rooms and not rooms[dest].visited)

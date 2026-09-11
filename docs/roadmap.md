@@ -53,42 +53,6 @@ not be what a player wants.
 
 ## Later
 
-### R1 · Search adds to the room instead of re-describing it
-*From:* [playtest 2026-09-11b](playtests/2026-09-11b.md), your list
-
-Of the run's 29 finds, only 10 used the word for what was found. Two
-re-described something the room had already said, and six put the thing on the
-delver's body. Every follow-up on what a find mentioned failed. The causes:
-- the search prompt borrows the room narrator's instructions;
-- it never sees the room's description;
-- nothing ties the result back to the fixture or the room.
-
-The fix:
-- include the original room description in the search prompt, and ask for
-  what it didn't say;
-- the game names the find before the model writes: "You look closer: a
-  harness.";
-- a find that never uses its fixture's word is refused;
-- the room description goes into the repeat check;
-- `look` lists what you've turned up;
-- the nouns a find used lead back to it.
-
-Measure against the counts above, on this world's rooms.
-
-### R2 · The third playtest's small fixes
-*From:* [playtest 2026-09-11b](playtests/2026-09-11b.md)
-
-All of these are fixed in code, with no model call:
-- The exits line marks the exits you haven't taken. On floor 6, 18 of 73
-  commands got "There are no stairs here."
-- `greet` becomes a verb. Today it goes to the model to interpret, which sent
-  "greet Powder Monkey" to a give.
-- `talk to Powder Monkey` stops splitting the name into addressee "powder" and
-  topic "monkey".
-- `inventory` groups repeats, the way `use` does since M14.1.
-- The epitaph stops inventing its turn count ("thirty-eight turns" for 308),
-  and stops ending mid-sentence.
-
 ### R3 · NPC dialogue invents numbers and plays its role literally
 *From:* [M14.1](tasks/M14.1-fixes-tasks.md#f8-measured-live-no-difference-and-a-bigger-problem)
 
@@ -96,7 +60,12 @@ On `qwen3.5:2b`, the Assayer named a price the canon never gave in 10 replies
 of 10, and called itself "a scale" or "a sack of iron". The Widow named herself
 "Elara". Two changes look likely, and both need a measured pass: a guard or
 instruction against inventing numbers, and a role line that says who the NPC
-is as well as what they do. R2's epitaph is the same failure.
+is as well as what they do.
+
+The epitaph shows the same failure. [M15](tasks/M15-search-and-fixes-tasks.md)
+took the numbers out of its prompt, and it stopped counting. But told to call
+the delver "they", it said "he" in at least 3 of 10, and invented people: "a
+young man named Thomas", "a young girl with silver teeth".
 
 ### R6 · The model's word tics: *something, thick, scent*
 *From:* [M13 O12](tasks/M13-open-items-tasks.md#still-open-and-why)
@@ -220,6 +189,13 @@ floor ahead of the player. Larger models wait on the hardware.
   hardware has. [systems.md §8](plan/systems.md#8-s4--action-vocabulary).
 
 ## Done
+
+- **R1 · Search adds to the room instead of re-describing it** →
+  [M15](tasks/M15-search-and-fixes-tasks.md). From the
+  [third playtest](playtests/2026-09-11b.md) and your list.
+- **R2 · The third playtest's small fixes** →
+  [M15](tasks/M15-search-and-fixes-tasks.md): unexplored exits, `greet`,
+  two-word NPC names, grouped inventory, the epitaph.
 
 Everything through M14.1 predates this file. See
 [plan.md §9](plan/plan.md#9-milestones).
