@@ -104,10 +104,10 @@ class Session:
 def build_session(args, settings: Settings, theme: Theme) -> Session:
     client = narrator = prefetcher = None
     if not args.offline:
-        client = OllamaClient(settings)
         if args.model:
-            settings = Settings(**{**settings.__dict__,
-                                   "chat": settings.chat.with_(name=args.model)})
+            # Every call site, not just `chat` -- see `Settings.with_model`.
+            settings = settings.with_model(args.model)
+        client = OllamaClient(settings)
         ok, msg = client.health()
         if not ok:
             print(f"[no model: {msg}]\n[running offline -- procedural names only]",
@@ -288,6 +288,10 @@ def main(argv: list[str] | None = None) -> int:
     # run seed only replays the dice.
     print(f"\nworld seed {session.state.world_seed} in {session.settings.db_path} "
           f"-- this run's dice: --seed {session.state.seed}")
+    if session.client is not None:
+        # The narrator's, not `chat`'s: `chat` is the one name that was right
+        # when `--model` silently wasn't.
+        print(f"model: {session.settings.narrator.name}")
     if session.transcript is not None:
         print(f"transcript: {session.transcript.path}")
     return 0

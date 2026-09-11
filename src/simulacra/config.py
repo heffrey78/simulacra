@@ -78,6 +78,27 @@ class Settings:
             self, "director", self.director or self.chat.with_(num_predict=400, temperature=0.9)
         )
 
+    def with_model(self, name: str) -> Settings:
+        """The same settings on another chat model -- at every call site.
+
+        The derived policies (narrator, judge, intent, director) are fixed in
+        `__post_init__` from the chat model, so replacing `chat` alone leaves
+        them on the old one. That is what `--model` did: `--model qwen3.5:2b`
+        warmed the 2b, then made every real call on qwen3:1.7b, visible only in
+        `ollama ps`. Each site keeps its own budget; only the name changes, and
+        only where it was the chat model's.
+        """
+        old = self.chat.name
+
+        def swap(policy: ModelPolicy | None) -> ModelPolicy | None:
+            return policy.with_(name=name) if policy is not None and policy.name == old else policy
+
+        return replace(
+            self, chat=self.chat.with_(name=name),
+            narrator=swap(self.narrator), judge=swap(self.judge),
+            intent=swap(self.intent), director=swap(self.director),
+        )
+
     @classmethod
     def load(cls, path: Path | None = None) -> Settings:
         """Load settings.toml if present, then let SIMULACRA_* env vars win."""
